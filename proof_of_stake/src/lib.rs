@@ -23,7 +23,7 @@ pub mod types;
 mod tests;
 
 use core::fmt::Debug;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::num::TryFromIntError;
 
 use borsh::BorshDeserialize;
@@ -297,6 +297,10 @@ where
     consensus_validator_set_handle().init(storage, current_epoch)?;
     below_capacity_validator_set_handle().init(storage, current_epoch)?;
     validator_set_positions_handle().init(storage, current_epoch)?;
+
+    let validators = validators
+        .into_iter()
+        .collect::<BTreeSet<GenesisValidator>>();
 
     for GenesisValidator {
         address,

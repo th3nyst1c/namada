@@ -38,6 +38,7 @@ mod tests {
     use namada_tx_prelude::key::RefTo;
     use namada_tx_prelude::proof_of_stake::parameters::testing::arb_pos_params;
     use namada_tx_prelude::token;
+    use namada_vp_prelude::key::{common, ed25519, testing, SecretKey};
     use namada_vp_prelude::proof_of_stake::WeightedValidator;
     use proptest::prelude::*;
     use rust_decimal;
@@ -54,11 +55,12 @@ mod tests {
         /// that this transaction is accepted by the PoS validity predicate.
         #[test]
         fn test_tx_bond(
-            (initial_stake, bond) in arb_initial_stake_and_bond(),
-            // A key to sign the transaction
-            key in arb_common_keypair(),
+            // (initial_stake, bond) in arb_initial_stake_and_bond(),
+            // // A key to sign the transaction
+            // key in arb_common_keypair(),
             pos_params in arb_pos_params(None)) {
-            test_tx_bond_aux(initial_stake, bond, key, pos_params).unwrap()
+            // test_tx_bond_aux(initial_stake, bond, key, pos_params).unwrap()
+            test_tx_bond_DEBUG(pos_params).unwrap()
         }
     }
 
@@ -330,6 +332,157 @@ mod tests {
             result,
             "PoS Validity predicate must accept this transaction"
         );
+        Ok(())
+    }
+
+    fn test_tx_bond_DEBUG(pos_params: PosParams) -> TxResult {
+        println!("DEBUGGING W SOME CUSTOM SHIT");
+        let validator = address::testing::established_address_1();
+        let consensus_key = key::testing::keypair_1().ref_to();
+        let commission_rate = rust_decimal::Decimal::new(5, 2);
+        let max_commission_rate_change = rust_decimal::Decimal::new(1, 2);
+        let initial_stake = token::Amount::from(10000000000_u64);
+
+        let delegator1 = address::testing::established_address_2();
+        let delegator2 = address::testing::established_address_3();
+
+        let genesis_validators = [GenesisValidator {
+            address: validator.clone(),
+            tokens: initial_stake,
+            consensus_key,
+            commission_rate,
+            max_commission_rate_change,
+        }];
+
+        init_pos(&genesis_validators[..], &pos_params, Epoch(0));
+
+        let self_bond = transaction::pos::Bond {
+            validator: validator.clone(),
+            amount: token::Amount::from(200000000_u64),
+            source: None,
+        };
+        let key_self = testing::gen_keypair::<ed25519::SigScheme>()
+            .try_to_sk::<common::SecretKey>()
+            .unwrap();
+        let delegation1 = transaction::pos::Bond {
+            validator: validator.clone(),
+            amount: token::Amount::from(300000000_u64),
+            source: Some(delegator1.clone()),
+        };
+        let key_del1 = testing::keypair_1();
+        let delegation2 = transaction::pos::Bond {
+            validator: validator.clone(),
+            amount: token::Amount::from(250000000_u64),
+            source: Some(delegator2.clone()),
+        };
+        let key_del2 = testing::keypair_2();
+
+        let native_token = tx_host_env::with(|tx_env| {
+            tx_env.spawn_accounts([&delegator1, &delegator2]);
+            let native_token = tx_env.wl_storage.storage.native_token.clone();
+
+            tx_env.credit_tokens(
+                &validator,
+                &native_token,
+                None,
+                token::Amount::from(500000000_u64),
+            );
+            tx_env.credit_tokens(
+                &delegator1,
+                &native_token,
+                None,
+                token::Amount::from(500000000_u64),
+            );
+            tx_env.credit_tokens(
+                &delegator2,
+                &native_token,
+                None,
+                token::Amount::from(500000000_u64),
+            );
+            native_token
+        });
+
+        let tx_code = vec![];
+
+        let tx_data_self = self_bond.try_to_vec().unwrap();
+        let tx_data_del1 = delegation1.try_to_vec().unwrap();
+        let tx_data_del2 = delegation2.try_to_vec().unwrap();
+
+        let tx_self = Tx::new(tx_code.clone(), Some(tx_data_self));
+        let tx_del1 = Tx::new(tx_code.clone(), Some(tx_data_del1));
+        let tx_del2 = Tx::new(tx_code.clone(), Some(tx_data_del2));
+
+        let signed_tx_self = tx_self.clone().sign(&key_self);
+        let signed_tx_del1 = tx_del1.clone().sign(&key_del1);
+        let signed_tx_del2 = tx_del2.clone().sign(&key_del2);
+
+        let tx_data_self = signed_tx_self.data.unwrap();
+        let tx_data_del1 = signed_tx_del1.data.unwrap();
+        let tx_data_del2 = signed_tx_del2.data.unwrap();
+
+        println!("CONSENSUS VALIDATOR SET INITIAL");
+        for epoch in 0..=pos_params.unbonding_len {
+            dbg!(read_consensus_validator_set_addresses_with_stake(
+                ctx(),
+                Epoch(epoch),
+            )?,);
+        }
+
+        // Ensure that the initial stake of the sole validator is equal to the
+        // PoS account balance
+        let pos_balance_key = token::balance_key(
+            &native_token,
+            &Address::Internal(InternalAddress::PoS),
+        );
+        let pos_balance_pre: token::Amount = ctx()
+            .read(&pos_balance_key)
+            .unwrap()
+            .expect("PoS must have balance");
+        assert_eq!(pos_balance_pre, initial_stake);
+
+        apply_tx(ctx(), tx_data_self)?;
+
+        println!("\nCONSENSUS VALIDATOR SET AFTER SELF BOND\n");
+        for epoch in 0..=pos_params.unbonding_len {
+            dbg!(read_consensus_validator_set_addresses_with_stake(
+                ctx(),
+                Epoch(epoch),
+            )?,);
+        }
+
+        apply_tx(ctx(), tx_data_del1)?;
+
+        println!("\nCONSENSUS VALIDATOR SET AFTER DELEGATION 1\n");
+        for epoch in 0..=pos_params.unbonding_len {
+            dbg!(read_consensus_validator_set_addresses_with_stake(
+                ctx(),
+                Epoch(epoch),
+            )?,);
+        }
+
+        apply_tx(ctx(), tx_data_del2)?;
+
+        println!("\nCONSENSUS VALIDATOR SET AFTER DELEGATION 2\n");
+        for epoch in 0..=pos_params.unbonding_len {
+            dbg!(read_consensus_validator_set_addresses_with_stake(
+                ctx(),
+                Epoch(epoch),
+            )?,);
+        }
+
+        // Use the tx_env to run PoS VP
+        let tx_env = tx_host_env::take();
+        let vp_env = TestNativeVpEnv::from_tx_env(tx_env, address::POS);
+        let result = vp_env.validate_tx(PosVP::new);
+        let result =
+            result.expect("Validation of valid changes must not fail!");
+        assert!(
+            result,
+            "PoS Validity predicate must accept this transaction"
+        );
+
+        assert!(false);
+
         Ok(())
     }
 

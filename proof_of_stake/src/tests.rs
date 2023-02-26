@@ -3,6 +3,8 @@
 use std::cmp::min;
 use std::ops::Range;
 
+use borsh::{BorshDeserialize, BorshSerialize};
+use data_encoding::{BASE32HEX_NOPAD, HEXUPPER};
 use namada_core::ledger::storage::testing::TestWlStorage;
 use namada_core::ledger::storage_api::collections::lazy_map;
 use namada_core::ledger::storage_api::token::credit_tokens;
@@ -1538,6 +1540,24 @@ fn test_validator_sets_swap() {
             bonded_stake: stake3.into(),
         })
     );
+}
+
+#[test]
+fn debug_get_validator_stake_from_storage_key() {
+    // use data_encoding::HEXUPPER;
+    // let amount = token::Amount::from(724980000000);
+    // let res = amount.try_to_vec().unwrap();
+    // dbg!(HEXUPPER.encode(res.as_slice()));
+    use data_encoding::BASE32HEX_NOPAD;
+    use namada_core::types::storage::KeySeg;
+
+    let string = "00003B5RVON00".to_string();
+    let amount = u64::parse(string).unwrap();
+    dbg!(amount);
+    // let thing = BASE32HEX_NOPAD.decode(string.as_ref());
+
+    // let amount = token::Amount::try_from_slice(string.as_bytes());
+    // dbg!(amount);
 }
 
 fn get_tendermint_set_updates(

@@ -726,7 +726,10 @@ where
     S: StorageRead + StorageWrite,
 {
     let amount = amount.change();
-    println!("BONDING TOKEN AMOUNT {}\n", amount);
+    println!(
+        "BONDING TOKEN AMOUNT {} IN EPOCH {}\n",
+        amount, current_epoch
+    );
     let params = read_pos_params(storage)?;
     let pipeline_epoch = current_epoch + params.pipeline_len;
     if let Some(source) = source {

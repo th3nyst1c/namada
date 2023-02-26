@@ -3434,6 +3434,134 @@ fn implicit_account_reveal_pk() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn pos_bonds_2() -> Result<()> {
+    let pipeline_len = 2;
+    let unbonding_len = 4;
+    let test = setup::network(
+        |genesis| {
+            let parameters = ParametersConfig {
+                min_num_of_blocks: 10,
+                max_expected_time_per_block: 30,
+                epochs_per_year: 31_536_000,
+                ..genesis.parameters
+            };
+            let pos_params = PosParamsConfig {
+                pipeline_len,
+                unbonding_len,
+                ..genesis.pos_params
+            };
+            GenesisConfig {
+                parameters,
+                pos_params,
+                ..genesis
+            }
+        },
+        Some("10s"),
+    )?;
+
+    // 1. Run the ledger node
+    let mut ledger =
+        run_as!(test, Who::Validator(0), Bin::Node, &["ledger"], Some(40))?;
+
+    ledger.exp_string("Namada ledger node started")?;
+    let _bg_ledger = ledger.background();
+
+    let validator_one_rpc = get_actor_rpc(&test, &Who::Validator(0));
+
+    let epoch = get_epoch(&test, &validator_one_rpc)?;
+
+    println!("Current epoch: {}", epoch);
+
+    // 2. Submit a self-bond for the gepnesis validator
+    let tx_args = vec![
+        "bond",
+        "--validator",
+        "validator-0",
+        "--amount",
+        "100",
+        "--gas-amount",
+        "0",
+        "--gas-limit",
+        "0",
+        "--gas-token",
+        NAM,
+        "--ledger-address",
+        &validator_one_rpc,
+    ];
+    let mut client =
+        run_as!(test, Who::Validator(0), Bin::Client, tx_args, Some(40))?;
+    client.exp_string("Transaction is valid.")?;
+    client.assert_success();
+
+    // 3. Submit a delegation to the genesis validator
+    let tx_args = vec![
+        "bond",
+        "--validator",
+        "validator-0",
+        "--source",
+        BERTHA,
+        "--amount",
+        "200",
+        "--gas-amount",
+        "0",
+        "--gas-limit",
+        "0",
+        "--gas-token",
+        NAM,
+        "--ledger-address",
+        &validator_one_rpc,
+    ];
+    let mut client = run!(test, Bin::Client, tx_args, Some(40))?;
+    client.exp_string("Transaction is valid.")?;
+    client.assert_success();
+
+    // 4. Submit another delegation to the genesis validator
+    let tx_args = vec![
+        "bond",
+        "--validator",
+        "validator-0",
+        "--source",
+        ALBERT,
+        "--amount",
+        "300",
+        "--gas-amount",
+        "0",
+        "--gas-limit",
+        "0",
+        "--gas-token",
+        NAM,
+        "--ledger-address",
+        &validator_one_rpc,
+    ];
+    let epoch = get_epoch(&test, &validator_one_rpc)?;
+
+    println!("Current epoch: {}", epoch);
+
+    let mut client = run!(test, Bin::Client, tx_args, Some(40))?;
+    client.exp_string("Transaction is valid.")?;
+    client.assert_success();
+
+    // 6. Wait for pipeline epoch
+    let pipeline_epoch = Epoch::from_str("2").unwrap();
+    let epoch = get_epoch(&test, &validator_one_rpc)?;
+
+    println!("Current epoch: {}", epoch);
+    let start = Instant::now();
+    let loop_timeout = Duration::new(1000, 0);
+    loop {
+        if Instant::now().duration_since(start) > loop_timeout {
+            panic!("Timed out waiting for epoch: {}", pipeline_epoch);
+        }
+        let epoch = get_epoch(&test, &validator_one_rpc)?;
+        if epoch >= pipeline_epoch {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
 /// Prepare proposal data in the test's temp dir from the given source address.
 /// This can be submitted with "init-proposal" command.
 fn prepare_proposal_data(test: &setup::Test, source: Address) -> PathBuf {

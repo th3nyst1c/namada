@@ -1685,8 +1685,9 @@ where
 
     let final_amount = updated_amount
         - computed_amounts
-            .iter()
-            .fold(token::Amount::default(), |sum, amnt| sum + amnt.amount);
+            .into_iter()
+            .map(|slashed| slashed.amount)
+            .sum();
     Ok(final_amount.change())
 }
 

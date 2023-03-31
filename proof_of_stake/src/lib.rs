@@ -1660,6 +1660,9 @@ where
     let mut last_computed_ix = 0_u64;
     let mut computed_amounts = HashMap::<u64, SlashedAmount>::new();
 
+    // TODO: I think the slashes must be in order of slash.epoch, because older
+    // epochs have to be applied before newer ones (in pseudo-code they're
+    // ordered too)
     for slash in slashes {
         let (infraction_epoch, slash_type) = (slash.epoch, slash.r#type);
         let mut computed_to_remove = HashSet::<u64>::new();

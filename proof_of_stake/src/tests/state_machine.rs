@@ -3,14 +3,15 @@
 use std::cmp;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
+use borsh::BorshDeserialize;
 use itertools::Itertools;
 use namada_core::ledger::storage::testing::TestWlStorage;
 use namada_core::ledger::storage_api::collections::lazy_map::NestedSubKey;
-use namada_core::ledger::storage_api::{token, StorageRead};
+use namada_core::ledger::storage_api::{self, token, StorageRead};
 use namada_core::types::address::{self, Address};
 use namada_core::types::key;
 use namada_core::types::key::common::PublicKey;
-use namada_core::types::storage::Epoch;
+use namada_core::types::storage::{Epoch, Key, KeySeg};
 use proptest::prelude::*;
 use proptest::prop_state_machine;
 use proptest::state_machine::{AbstractStateMachine, StateMachineTest};
@@ -31,8 +32,8 @@ use crate::types::{
 };
 use crate::{
     below_capacity_validator_set_handle, consensus_validator_set_handle,
-    enqueued_slashes_handle, read_pos_params, validator_slashes_handle,
-    validator_state_handle,
+    enqueued_slashes_handle, read_pos_params, validator_deltas_handle,
+    validator_slashes_handle, validator_state_handle,
 };
 
 prop_state_machine! {
@@ -161,6 +162,8 @@ impl StateMachineTest for ConcretePosState {
                 let current_epoch = state.s.storage.block.epoch;
                 super::process_slashes(&mut state.s, current_epoch).unwrap();
 
+                let params = read_pos_params(&state.s).unwrap();
+                state.check_global_post_conditions(&params, current_epoch);
                 state.check_next_epoch_post_conditions(&params);
             }
             Transition::InitValidator {
@@ -169,32 +172,36 @@ impl StateMachineTest for ConcretePosState {
                 commission_rate,
                 max_commission_rate_change,
             } => {
-                let epoch = state.current_epoch();
+                let current_epoch = state.current_epoch();
 
                 super::become_validator(
                     &mut state.s,
                     &params,
                     &address,
                     &consensus_key,
-                    epoch,
+                    current_epoch,
                     commission_rate,
                     max_commission_rate_change,
                 )
                 .unwrap();
 
+                let params = read_pos_params(&state.s).unwrap();
+                state.check_global_post_conditions(&params, current_epoch);
                 state.check_init_validator_post_conditions(
-                    epoch, &params, &address,
+                    current_epoch,
+                    &params,
+                    &address,
                 )
             }
             Transition::Bond { id, amount } => {
-                let epoch = state.current_epoch();
-                let pipeline = epoch + params.pipeline_len;
+                let current_epoch = state.current_epoch();
+                let pipeline = current_epoch + params.pipeline_len;
                 let validator_stake_before_bond_cur =
                     crate::read_validator_stake(
                         &state.s,
                         &params,
                         &id.validator,
-                        epoch,
+                        current_epoch,
                     )
                     .unwrap()
                     .unwrap_or_default();
@@ -245,12 +252,14 @@ impl StateMachineTest for ConcretePosState {
                     Some(&id.source),
                     &id.validator,
                     amount,
-                    epoch,
+                    current_epoch,
                 )
                 .unwrap();
 
+                let params = read_pos_params(&state.s).unwrap();
+                state.check_global_post_conditions(&params, current_epoch);
                 state.check_bond_post_conditions(
-                    epoch,
+                    current_epoch,
                     &params,
                     id.clone(),
                     amount,
@@ -274,8 +283,8 @@ impl StateMachineTest for ConcretePosState {
                 );
             }
             Transition::Unbond { id, amount } => {
-                let epoch = state.current_epoch();
-                let pipeline = epoch + params.pipeline_len;
+                let current_epoch = state.current_epoch();
+                let pipeline = current_epoch + params.pipeline_len;
                 let native_token = state.s.get_native_token().unwrap();
                 let pos = address::POS;
                 let src_balance_pre =
@@ -289,7 +298,7 @@ impl StateMachineTest for ConcretePosState {
                         &state.s,
                         &params,
                         &id.validator,
-                        epoch,
+                        current_epoch,
                     )
                     .unwrap()
                     .unwrap_or_default();
@@ -309,12 +318,14 @@ impl StateMachineTest for ConcretePosState {
                     Some(&id.source),
                     &id.validator,
                     amount,
-                    epoch,
+                    current_epoch,
                 )
                 .unwrap();
 
+                let params = read_pos_params(&state.s).unwrap();
+                state.check_global_post_conditions(&params, current_epoch);
                 state.check_unbond_post_conditions(
-                    epoch,
+                    current_epoch,
                     &params,
                     id.clone(),
                     amount,
@@ -336,7 +347,7 @@ impl StateMachineTest for ConcretePosState {
             Transition::Withdraw {
                 id: BondId { source, validator },
             } => {
-                let epoch = state.current_epoch();
+                let current_epoch = state.current_epoch();
                 let native_token = state.s.get_native_token().unwrap();
                 let pos = address::POS;
                 let src_balance_pre =
@@ -350,9 +361,12 @@ impl StateMachineTest for ConcretePosState {
                     &mut state.s,
                     Some(&source),
                     &validator,
-                    epoch,
+                    current_epoch,
                 )
                 .unwrap();
+
+                let params = read_pos_params(&state.s).unwrap();
+                state.check_global_post_conditions(&params, current_epoch);
 
                 let src_balance_post =
                     token::read_balance(&state.s, &native_token, &source)
@@ -393,6 +407,8 @@ impl StateMachineTest for ConcretePosState {
                 .unwrap();
 
                 // Apply some post-conditions
+                let params = read_pos_params(&state.s).unwrap();
+                state.check_global_post_conditions(&params, current_epoch);
                 state.check_misbehavior_post_conditions(
                     &params,
                     current_epoch,
@@ -412,6 +428,7 @@ impl StateMachineTest for ConcretePosState {
 
                 // Post-conditions
                 let params = read_pos_params(&state.s).unwrap();
+                state.check_global_post_conditions(&params, current_epoch);
                 state.check_unjail_validator_post_conditions(&params, &address);
             }
         }
@@ -737,8 +754,20 @@ impl ConcretePosState {
         slash_type: SlashType,
         validator: &Address,
     ) {
+        println!(
+            "\nChecking misbehavior post conditions:\nValidator: {}",
+            validator
+        );
+
         // Validator state jailed and validator removed from the consensus set
         for offset in 0..=params.pipeline_len {
+            // dbg!(
+            //     crate::read_consensus_validator_set_addresses_with_stake(
+            //         &self.s,
+            //         current_epoch + offset
+            //     )
+            //     .unwrap()
+            // );
             assert_eq!(
                 validator_state_handle(validator)
                     .get(&self.s, current_epoch + offset, params)
@@ -746,12 +775,12 @@ impl ConcretePosState {
                 Some(ValidatorState::Jailed)
             );
             let in_consensus = consensus_validator_set_handle()
-                .at(&(dbg!(current_epoch + offset)))
+                .at(&(current_epoch + offset))
                 .iter(&self.s)
                 .unwrap()
                 .any(|res| {
                     let (_, val_address) = res.unwrap();
-                    dbg!(&val_address);
+                    // dbg!(&val_address);
                     val_address == validator.clone()
                 });
             assert!(!in_consensus);
@@ -834,6 +863,155 @@ impl ConcretePosState {
             val_state == Some(ValidatorState::Consensus)
                 || val_state == Some(ValidatorState::BelowCapacity)
         );
+    }
+
+    fn check_global_post_conditions(
+        &self,
+        params: &PosParams,
+        current_epoch: Epoch,
+    ) {
+        // Ensure that every validator in each set has the proper state
+        for epoch in Epoch::iter_bounds_inclusive(
+            current_epoch,
+            current_epoch + params.pipeline_len,
+        ) {
+            println!("Epoch {epoch}");
+            let mut vals = HashSet::<Address>::new();
+            for WeightedValidator {
+                bonded_stake,
+                address: validator,
+            } in crate::read_consensus_validator_set_addresses_with_stake(
+                &self.s, epoch,
+            )
+            .unwrap()
+            {
+                let deltas_stake = validator_deltas_handle(&validator)
+                    .get_sum(&self.s, epoch, params)
+                    .unwrap()
+                    .unwrap_or_default();
+                println!(
+                    "Consensus val {}, stake: {} ({})",
+                    &validator,
+                    u64::from(bonded_stake),
+                    deltas_stake
+                );
+                let state = crate::validator_state_handle(&validator)
+                    .get(&self.s, epoch, params)
+                    .unwrap();
+                if state.is_none() {
+                    dbg!(
+                        crate::validator_state_handle(&validator)
+                            .get(&self.s, current_epoch, params)
+                            .unwrap()
+                    );
+                    dbg!(
+                        crate::validator_state_handle(&validator)
+                            .get(&self.s, current_epoch.next(), params)
+                            .unwrap()
+                    );
+                    dbg!(
+                        crate::validator_state_handle(&validator)
+                            .get(&self.s, current_epoch.next(), params)
+                            .unwrap()
+                    );
+                }
+
+                assert_eq!(state, Some(ValidatorState::Consensus));
+                assert!(!vals.contains(&validator));
+                vals.insert(validator);
+            }
+            for WeightedValidator {
+                bonded_stake,
+                address: validator,
+            } in
+                crate::read_below_capacity_validator_set_addresses_with_stake(
+                    &self.s, epoch,
+                )
+                .unwrap()
+            {
+                let deltas_stake = validator_deltas_handle(&validator)
+                    .get_sum(&self.s, epoch, params)
+                    .unwrap()
+                    .unwrap_or_default();
+                println!(
+                    "Below-cap val {}, stake: {} ({})",
+                    &validator,
+                    u64::from(bonded_stake),
+                    deltas_stake
+                );
+                let state = crate::validator_state_handle(&validator)
+                    .get(&self.s, epoch, params)
+                    .unwrap();
+                if state.is_none() {
+                    dbg!(
+                        crate::validator_state_handle(&validator)
+                            .get(&self.s, current_epoch, params)
+                            .unwrap()
+                    );
+                    dbg!(
+                        crate::validator_state_handle(&validator)
+                            .get(&self.s, current_epoch.next(), params)
+                            .unwrap()
+                    );
+                    dbg!(
+                        crate::validator_state_handle(&validator)
+                            .get(&self.s, current_epoch.next(), params)
+                            .unwrap()
+                    );
+                }
+                assert_eq!(state, Some(ValidatorState::BelowCapacity));
+                assert!(!vals.contains(&validator));
+                vals.insert(validator);
+            }
+            // Jailed validators not in a set
+            let all_validators =
+                crate::read_all_validator_addresses(&self.s, epoch).unwrap();
+
+            for val in all_validators {
+                let state = validator_state_handle(&val)
+                    .get(&self.s, epoch, params)
+                    .unwrap()
+                    .unwrap();
+
+                if state == ValidatorState::Jailed {
+                    let stake = validator_deltas_handle(&val)
+                        .get_sum(&self.s, epoch, params)
+                        .unwrap()
+                        .unwrap_or_default();
+                    println!("Jailed val {}, stake {}", &val, stake);
+                    assert!(!vals.contains(&val));
+                }
+            }
+
+            // let prefix = Key::from(crate::ADDRESS.to_db_key())
+            //     .push(&crate::storage::VALIDATOR_STORAGE_PREFIX.to_owned())
+            //     .expect("Cannot obtain a storage key");
+            // for iter in
+            //     storage_api::iter_prefix_bytes(&self.s, &prefix).unwrap()
+            // {
+            //     let (key, bytes) = iter.unwrap();
+            //     if let Some((address, i_epoch)) =
+            //         crate::storage::is_validator_state_key(&key)
+            //     {
+            //         println!(
+            //             "-------- address: {}, i_epoch: {}",
+            //             address, i_epoch
+            //         );
+            //         if epoch != i_epoch {
+            //             continue;
+            //         }
+            //         let state: ValidatorState =
+            //
+            // BorshDeserialize::try_from_slice(&bytes).ok().unwrap();
+            //         if state == ValidatorState::Jailed {
+            //             println!("Jailed val {}, epoch {}", address,
+            // i_epoch);
+            // assert!(!vals.contains(address));         }
+            //     }
+            // }
+            println!("");
+        }
+        // TODO: expand this to include jailed validators
     }
 }
 
@@ -935,6 +1113,7 @@ impl AbstractStateMachine for AbstractPosState {
             .boxed()
     }
 
+    // TODO: allow bonding to jailed val
     fn transitions(state: &Self::State) -> BoxedStrategy<Self::Transition> {
         let unbondable = state
             .bond_sums()
@@ -1314,12 +1493,13 @@ impl AbstractStateMachine for AbstractPosState {
                 infraction_epoch,
                 height,
             } => {
+                let current_epoch = state.epoch;
                 println!(
-                    "\nABSTRACT Misbehavior in epoch {} by validator {}",
-                    infraction_epoch, address
+                    "\nABSTRACT Misbehavior in epoch {} by validator {}, \
+                     found in epoch {}",
+                    infraction_epoch, address, current_epoch
                 );
 
-                let current_epoch = state.epoch;
                 let processing_epoch =
                     *infraction_epoch + state.params.unbonding_len;
                 let slash = Slash {

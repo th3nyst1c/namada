@@ -41,7 +41,7 @@ use namada_core::types::address::{Address, InternalAddress};
 use namada_core::types::key::{
     common, tm_consensus_key_raw_hash, PublicKeyTmRawHash,
 };
-pub use namada_core::types::storage::Epoch;
+pub use namada_core::types::storage::{Epoch, Key, KeySeg};
 use namada_core::types::token;
 use once_cell::unsync::Lazy;
 use parameters::PosParams;
@@ -750,6 +750,8 @@ where
 }
 
 /// Read all validator addresses.
+/// TODO: expand this to include the jailed validators as well, as it currently
+/// only does consensus and bc
 pub fn read_all_validator_addresses<S>(
     storage: &S,
     epoch: namada_core::types::storage::Epoch,
@@ -757,10 +759,23 @@ pub fn read_all_validator_addresses<S>(
 where
     S: StorageRead,
 {
-    let mut addresses = read_consensus_validator_set_addresses(storage, epoch)?;
-    let bc_addresses =
-        read_below_capacity_validator_set_addresses(storage, epoch)?;
-    addresses.extend(bc_addresses.into_iter());
+    // let mut addresses = read_consensus_validator_set_addresses(storage,
+    // epoch)?; let bc_addresses =
+    //     read_below_capacity_validator_set_addresses(storage, epoch)?;
+    // addresses.extend(bc_addresses.into_iter());
+
+    let prefix = Key::from(crate::ADDRESS.to_db_key())
+        .push(&crate::storage::VALIDATOR_STORAGE_PREFIX.to_owned())
+        .expect("Cannot obtain a storage key");
+    let mut addresses = HashSet::<Address>::new();
+    for iter in storage_api::iter_prefix_bytes(storage, &prefix)? {
+        let (key, _) = iter.unwrap();
+        if let Some(address) =
+            crate::storage::is_validator_max_commission_rate_change_key(&key)
+        {
+            addresses.insert(address.clone());
+        }
+    }
     Ok(addresses)
 }
 
@@ -2916,6 +2931,47 @@ where
     S: StorageRead + StorageWrite,
 {
     println!("SLASHING ON NEW EVIDENCE FROM {}", validator);
+    println!(
+        "Current state = {:?}",
+        validator_state_handle(validator)
+            .get(storage, current_epoch, params)
+            .unwrap()
+            .unwrap()
+    );
+
+    // Debugging
+    println!("PRE Validator Set");
+    for offset in 0..=params.pipeline_len {
+        println!("Epoch {}", current_epoch.0 + offset);
+        for wv in read_consensus_validator_set_addresses_with_stake(
+            storage,
+            current_epoch + offset,
+        )? {
+            println!(
+                "Consensus val {}, stake {}, state {:?}",
+                &wv.address,
+                u64::from(wv.bonded_stake),
+                validator_state_handle(&wv.address)
+                    .get(storage, current_epoch + offset, params)
+                    .unwrap()
+            );
+        }
+        for wv in read_below_capacity_validator_set_addresses_with_stake(
+            storage,
+            current_epoch + offset,
+        )? {
+            println!(
+                "Below-cap val {}, stake {}, state {:?}",
+                &wv.address,
+                u64::from(wv.bonded_stake),
+                validator_state_handle(&wv.address).get(
+                    storage,
+                    current_epoch + offset,
+                    params
+                )
+            );
+        }
+    }
 
     let evidence_block_height: u64 = evidence_block_height.into();
     let slash = Slash {
@@ -2951,6 +3007,7 @@ where
             .expect("Expected to find a valid validator.");
         match prev_state {
             ValidatorState::Consensus => {
+                println!("CONSENSUS");
                 let amount_pre = validator_deltas_handle(validator)
                     .get_sum(storage, epoch, params)?
                     .unwrap_or_default();
@@ -2983,7 +3040,7 @@ where
                             storage,
                         )?
                         .expect("Should return a position.");
-                        let removed_validator = below_capacity_handle
+                        let max_bc_validator = below_capacity_handle
                             .at(&max_below_capacity_amount.into())
                             .remove(storage, &position_to_promote)?
                             .expect(
@@ -2995,12 +3052,19 @@ where
                                 .at(&max_below_capacity_amount),
                             storage,
                             &epoch,
-                            &removed_validator,
+                            &max_bc_validator,
+                        )?;
+                        validator_state_handle(&max_bc_validator).set(
+                            storage,
+                            ValidatorState::Consensus,
+                            current_epoch,
+                            params.pipeline_len,
                         )?;
                     }
                 }
             }
             ValidatorState::BelowCapacity => {
+                println!("BELOW CAP");
                 let amount_pre = validator_deltas_handle(validator)
                     .get_sum(storage, epoch, params)?
                     .unwrap_or_default();
@@ -3014,7 +3078,10 @@ where
                     .remove(storage, &val_position)?;
             }
             ValidatorState::Inactive => {
-                todo!();
+                println!("INACTIVE");
+                panic!(
+                    "SHouldn't be here - haven't implemented inactive vals yet"
+                )
             }
             ValidatorState::Jailed => {
                 println!("Validator already jailed");
@@ -3028,6 +3095,8 @@ where
         validator, current_epoch
     );
 
+    println!("POST Validator Set");
+
     // Set the validator state as `Jailed` thru the pipeline epoch
     for offset in 0..=params.pipeline_len {
         validator_state_handle(validator).set(
@@ -3036,20 +3105,39 @@ where
             current_epoch,
             offset,
         )?;
+        println!("Epoch {}", current_epoch.0 + offset);
+        for wv in read_consensus_validator_set_addresses_with_stake(
+            storage,
+            current_epoch + offset,
+        )? {
+            println!(
+                "Consensus val {}, stake {}, state {:?}",
+                &wv.address,
+                u64::from(wv.bonded_stake),
+                validator_state_handle(&wv.address).get(
+                    storage,
+                    current_epoch + offset,
+                    params
+                )
+            );
+        }
+        for wv in read_below_capacity_validator_set_addresses_with_stake(
+            storage,
+            current_epoch + offset,
+        )? {
+            println!(
+                "Below-cap val {}, stake {}, state {:?}",
+                &wv.address,
+                u64::from(wv.bonded_stake),
+                validator_state_handle(&wv.address).get(
+                    storage,
+                    current_epoch + offset,
+                    params
+                )
+            );
+        }
+        println!("");
     }
-
-    dbg!(read_consensus_validator_set_addresses_with_stake(
-        storage,
-        current_epoch
-    )?);
-    dbg!(read_consensus_validator_set_addresses_with_stake(
-        storage,
-        current_epoch.next()
-    )?);
-    dbg!(read_consensus_validator_set_addresses_with_stake(
-        storage,
-        current_epoch + params.pipeline_len
-    )?);
 
     // No other actions are performed here until the epoch in which the slash is
     // processed.
@@ -3113,6 +3201,10 @@ where
             r#type: enqueued_slash.r#type,
             rate: slash_rate,
         };
+        println!(
+            "Processing slash for val {} committed in epoch {}, with rate {}",
+            &validator, enqueued_slash.epoch, slash_rate
+        );
 
         let cur_slashes = validators_and_slashes.entry(validator).or_default();
         cur_slashes.push(updated_slash);
@@ -3311,6 +3403,7 @@ where
     let stake =
         read_validator_stake(storage, &params, validator, pipeline_epoch)?
             .unwrap_or_default();
+    dbg!(&stake);
 
     insert_validator_into_validator_set(
         storage,

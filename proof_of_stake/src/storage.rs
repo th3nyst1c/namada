@@ -9,7 +9,7 @@ use crate::epoched::LAZY_MAP_SUB_KEY;
 pub use crate::types::*; // TODO: not sure why this needs to be public
 
 const PARAMS_STORAGE_KEY: &str = "params";
-const VALIDATOR_STORAGE_PREFIX: &str = "validator";
+pub const VALIDATOR_STORAGE_PREFIX: &str = "validator";
 const VALIDATOR_ADDRESS_RAW_HASH: &str = "address_raw_hash";
 const VALIDATOR_CONSENSUS_KEY_STORAGE_KEY: &str = "consensus_key";
 const VALIDATOR_STATE_STORAGE_KEY: &str = "state";
@@ -256,18 +256,25 @@ pub fn validator_state_key(validator: &Address) -> Key {
 }
 
 /// Is storage key for validator's state?
-pub fn is_validator_state_key(key: &Key) -> Option<&Address> {
+pub fn is_validator_state_key(key: &Key) -> Option<(&Address, Epoch)> {
     match &key.segments[..] {
         [
             DbKeySeg::AddressSeg(addr),
             DbKeySeg::StringSeg(prefix),
             DbKeySeg::AddressSeg(validator),
             DbKeySeg::StringSeg(key),
+            DbKeySeg::StringSeg(lazy_map),
+            DbKeySeg::StringSeg(data),
+            DbKeySeg::StringSeg(epoch),
         ] if addr == &ADDRESS
             && prefix == VALIDATOR_STORAGE_PREFIX
-            && key == VALIDATOR_STATE_STORAGE_KEY =>
+            && key == VALIDATOR_STATE_STORAGE_KEY
+            && lazy_map == LAZY_MAP_SUB_KEY
+            && data == lazy_map::DATA_SUBKEY =>
         {
-            Some(validator)
+            let epoch = Epoch::parse(epoch.clone())
+                .expect("Should be able to parse the epoch");
+            Some((validator, epoch))
         }
         _ => None,
     }

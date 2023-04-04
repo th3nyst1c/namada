@@ -496,7 +496,11 @@ pub async fn query_transparent_balance(
                             currency_code, sub_prefix, balance
                         );
                     }
-                    None => println!("{}: {}", currency_code, balance),
+                    None => {
+                        println!("DOING BALANCE");
+                        dbg!(&balance);
+                        println!("{}: {}", currency_code, balance);
+                    }
                 },
                 None => {
                     println!("No {} balance found for {}", currency_code, owner)

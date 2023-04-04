@@ -10,35 +10,26 @@
 //! `NAMADA_E2E_KEEP_TEMP=true`.
 #![allow(clippy::type_complexity)]
 
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::net::SocketAddr;
 use std::str::FromStr;
-
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::Result;
-
+use namada::types::key::{self, ed25519, SigScheme};
 use namada::types::storage::Epoch;
-
+use namada::types::token;
+use namada_apps::client;
 use namada_apps::config::genesis::genesis_config::{
     GenesisConfig, ParametersConfig, PosParamsConfig,
 };
-
-use crate::e2e::setup::constants::*;
-
-use crate::e2e::helpers::{find_bonded_stake, get_actor_rpc, get_epoch};
-use crate::e2e::setup::NamadaBgCmd;
-use crate::e2e::setup::{self, default_port_offset, Bin, Who};
-use crate::{run, run_as};
-
-use std::net::SocketAddr;
-
-use namada::types::key::{self, ed25519, SigScheme};
-use namada::types::token;
-use namada_apps::client;
 use namada_apps::config::Config;
 
+use crate::e2e::helpers::{find_bonded_stake, get_actor_rpc, get_epoch};
 use crate::e2e::mbt::Reactor;
-
-use std::collections::{BTreeMap, HashMap, HashSet};
+use crate::e2e::setup::constants::*;
+use crate::e2e::setup::{self, default_port_offset, Bin, NamadaBgCmd, Who};
+use crate::{run, run_as};
 
 struct NamadaBlockchain {
     test: crate::e2e::setup::Test,
@@ -47,8 +38,8 @@ struct NamadaBlockchain {
     tla_accounts: HashMap<String, String>,
 }
 
-const PIPELINE_LEN: u64 = 1;
-const UNBONDING_LEN: u64 = 2;
+const PIPELINE_LEN: u64 = 2;
+const UNBONDING_LEN: u64 = 4;
 
 impl NamadaBlockchain {
     fn get_reactor() -> Result<Reactor<'static, Self>> {
@@ -362,7 +353,7 @@ impl NamadaBlockchain {
         mbt_reactor.register("selfWithdraw", |system, state| {
             let validator_one_rpc =
                 get_actor_rpc(&system.test, &Who::Validator(0));
-
+            println!("\nSelfWithdraw reactor\n");
             let sender = state.get("lastTx.sender");
             let real_sender = system
                 .tla_accounts
@@ -370,6 +361,7 @@ impl NamadaBlockchain {
                 .map(|x| x.as_str())
                 .expect("account is not present");
             assert_eq!(real_sender, "validator-0");
+            println!("\nREALSENDER\n");
 
             let tx_args = vec![
                 "withdraw",
@@ -391,8 +383,13 @@ impl NamadaBlockchain {
                 tx_args,
                 Some(40)
             )?;
+            println!("\nSUBMITCOMMAND\n");
+
             client.exp_string("Transaction is valid.")?;
+            println!("\nTX IS VALID\n");
+
             client.assert_success();
+            println!("\nTX SUCCESS\n");
 
             Ok(())
         });
@@ -657,7 +654,8 @@ impl NamadaBlockchain {
                             / token::SCALE) as i64;
 
                     // offset with (PIPELINE_LEN + 1)
-                    // as cli returns the staked-bond from last commited epoch, not current one
+                    // as cli returns the staked-bond from last commited epoch,
+                    // not current one
                     let prev_id = state.get("totalDeltas.\\#map.#").i64()
                         - 1
                         - (PIPELINE_LEN as i64);
@@ -692,9 +690,11 @@ impl NamadaBlockchain {
 
 // #[test_case::test_case("src/e2e/data/traces/example-20-p1-u2.itf.json")]
 // #[test_case::test_case("src/e2e/data/traces/example-300-p1-u2.itf.json")]
-// #[test_case::test_case("src/e2e/data/traces/example-slash-50-p2-u4.itf.json")]
-// #[test_case::test_case("src/e2e/data/traces/example-slash-50-p2-u6.itf.json")]
-#[test_case::test_case("src/e2e/data/traces/example-slash-30-p1-u2.itf.json")]
+// )] #[test_case::test_case("src/e2e/data/traces/example-slash-50-p2-u6.itf.
+// json")]
+// #[test_case::test_case("src/e2e/data/traces/example-slash-30-p1-u2.itf.json"
+// )]
+#[test_case::test_case("src/e2e/data/traces/example-slash-50-p2-u4.itf.json")]
 fn mbt_pos(path: &str) -> Result<()> {
     let json_string = std::fs::read_to_string(path)?;
     let json_value = gjson::parse(&json_string);

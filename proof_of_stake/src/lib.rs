@@ -870,16 +870,12 @@ where
             );
         }
     }
-    let state = validator_state_handle(validator).get(
-        storage,
-        pipeline_epoch,
-        &params,
-    )?;
+    let validator_state_handle = validator_state_handle(validator);
+    let state = validator_state_handle.get(storage, pipeline_epoch, &params)?;
     if state.is_none() {
         return Err(BondError::NotAValidator(validator.clone()).into());
     }
 
-    let validator_state_handle = validator_state_handle(validator);
     let source = source.unwrap_or(validator);
     let bond_handle = bond_handle(source, validator);
 
@@ -1523,6 +1519,7 @@ where
 
     // Make sure there are enough tokens left in the bond at the pipeline offset
     let pipeline_epoch = current_epoch + params.pipeline_len;
+    // TODO: does `remaining_at_pipeline` need to account for slashes?
     let remaining_at_pipeline = bonds_handle
         .get_sum(storage, pipeline_epoch, &params)?
         .unwrap_or_default();
@@ -1535,6 +1532,7 @@ where
     }
 
     let unbonds = unbond_handle(source, validator);
+    // TODO: think if this should be +1 or not!!!
     let withdrawable_epoch =
         current_epoch + params.pipeline_len + params.unbonding_len;
 
@@ -1548,17 +1546,6 @@ where
     #[allow(clippy::needless_collect)]
     let bonds: Vec<Result<_, _>> =
         bonds_handle.get_data_handler().iter(storage)?.collect();
-
-    // tracing::debug!("Bonds before decrementing:");
-    // for ep in Epoch::default().iter_range(params.unbonding_len * 3) {
-    //     tracing::debug!(
-    //         "bond delta at epoch {}: {}",
-    //         ep,
-    //         bond_remain_handle
-    //             .get_delta_val(storage, ep, &params)?
-    //             .unwrap_or_default()
-    //     )
-    // }
 
     let mut bond_iter = bonds.into_iter().rev();
 
@@ -3226,6 +3213,13 @@ where
         )?
         .unwrap_or_default();
 
+        println!(
+            "Val {} stake at infraction epoch {} = {}",
+            &validator,
+            infraction_epoch,
+            u64::from(validator_stake_at_infraction)
+        );
+
         for enqueued_slash in &enqueued_slashes {
             // TODO: should we be skipping over currently jailed validators?
             // if validator_state_handle(&validator).get(
@@ -3251,7 +3245,12 @@ where
                 let unbonds = unbond_records_handle(&validator).at(&epoch);
                 for unbond in unbonds.iter(storage)? {
                     let unbond = unbond?;
-                    if unbond.start <= infraction_epoch {
+                    println!(
+                        "UnbondRecord: amount = {}, start_epoch {}",
+                        &u64::from(unbond.amount),
+                        &unbond.start
+                    );
+                    if unbond.start > infraction_epoch {
                         continue;
                     }
                     let mut prev_slashes = Vec::<Slash>::new();
@@ -3259,11 +3258,16 @@ where
                         validator_slashes_handle(&validator).iter(storage)?
                     {
                         let val_slash = val_slash?;
+                        println!(
+                            "Past slash at epoch {} with rate {}",
+                            val_slash.epoch, val_slash.rate
+                        );
                         if unbond.start <= val_slash.epoch
                             && val_slash.epoch + params.unbonding_len
                                 < infraction_epoch
                         // TODO: this `<` should maybe be a `<=`
                         {
+                            println!("Collecting this slash");
                             prev_slashes.push(val_slash);
                         }
                     }
@@ -3275,19 +3279,28 @@ where
                             unbond.amount,
                             &mut prev_slashes,
                         )?);
+
+                    println!(
+                        "Total unbonded (epoch {}) w slashing = {}",
+                        epoch, total_unbonded
+                    );
                 }
             }
+            println!("\nComputing adjusted amounts now");
 
             // Compute the adjusted validator deltas and slashed amounts
             let mut last_slash = token::Amount::default();
             for offset in 1..=params.pipeline_len {
+                println!("Epoch {}", current_epoch + offset);
                 let unbonds = unbond_records_handle(&validator)
                     .at(&(current_epoch + offset));
 
                 for unbond in unbonds.iter(storage)? {
-                    dbg!(&unbond);
                     let unbond = unbond?;
-
+                    println!(
+                        "UnbondRecord: amount = {}, start_epoch {}",
+                        &unbond.amount, &unbond.start
+                    );
                     if unbond.start > infraction_epoch {
                         continue;
                     }
@@ -3297,11 +3310,16 @@ where
                         validator_slashes_handle(&validator).iter(storage)?
                     {
                         let val_slash = val_slash?;
+                        println!(
+                            "Past slash at epoch {} with rate {}",
+                            val_slash.epoch, val_slash.rate
+                        );
                         if unbond.start <= val_slash.epoch
                             && val_slash.epoch + params.unbonding_len
                                 < infraction_epoch
                         // TODO: this `<` should maybe be a `<=`
                         {
+                            println!("Collecting this slash");
                             prev_slashes.push(val_slash);
                         }
                     }
@@ -3313,15 +3331,22 @@ where
                             unbond.amount,
                             &mut prev_slashes,
                         )?);
+                    println!(
+                        "Total unbonded (offset {}) w slashing = {}",
+                        offset, total_unbonded
+                    );
                 }
 
                 let this_slash = decimal_mult_amount(
                     enqueued_slash.rate,
                     validator_stake_at_infraction - total_unbonded,
                 );
+                println!("This slash = {}", this_slash);
 
                 // TODO: should `diff_slashed_amount` be negative?
                 let diff_slashed_amount = (this_slash - last_slash).change();
+                println!("Diff slashed amount = {}", diff_slashed_amount);
+
                 deltas_for_update.push((
                     validator.clone(),
                     offset,
@@ -3334,10 +3359,10 @@ where
             }
         }
     }
+    println!("\nUpdating deltas");
     // Update the deltas in storage
     for (validator, offset, delta) in deltas_for_update {
-        // TODO: may need to amend this function to take the offset as a param
-        // too (since it automatically uses pipeline within)
+        println!("Val {} at offset {} delta = {}", &validator, offset, -delta);
         update_validator_deltas(
             storage,
             &params,

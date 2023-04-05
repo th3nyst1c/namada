@@ -750,7 +750,7 @@ impl ConcretePosState {
         validator: &Address,
     ) {
         println!(
-            "\nChecking misbehavior post conditions:\nValidator: {}",
+            "\nChecking misbehavior post conditions for validator: \n{}",
             validator
         );
 
@@ -795,6 +795,7 @@ impl ConcretePosState {
         } else {
             panic!("Could not find the slash enqueued");
         }
+        println!("Finished misbehavior post-conditions\n")
 
         // TODO: Any others?
     }

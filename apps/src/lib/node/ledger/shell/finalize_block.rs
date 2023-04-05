@@ -1934,11 +1934,7 @@ mod test_finalize_block {
 
         // Unjail one of the validators
         let current_epoch = shell.wl_storage.storage.block.epoch;
-        unjail_validator(
-            &mut shell.wl_storage,
-            &val1.address,
-            current_epoch,
-        )?;
+        unjail_validator(&mut shell.wl_storage, &val1.address, current_epoch)?;
         let pipeline_epoch = current_epoch + params.pipeline_len;
 
         // Check that the state is the same until the pipeline epoch, at which

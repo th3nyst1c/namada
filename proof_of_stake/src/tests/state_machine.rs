@@ -755,7 +755,8 @@ impl ConcretePosState {
         );
 
         // Validator state jailed and validator removed from the consensus set
-        for offset in 0..=params.pipeline_len {
+        // starting at the next epoch
+        for offset in 1..=params.pipeline_len {
             // dbg!(
             //     crate::read_consensus_validator_set_addresses_with_stake(
             //         &self.s,
@@ -782,7 +783,7 @@ impl ConcretePosState {
         }
 
         // `enqueued_slashes` contains the slash element just added
-        let processing_epoch = infraction_epoch + params.unbonding_len;
+        let processing_epoch = infraction_epoch + params.unbonding_len + 1_u64;
         let slash = enqueued_slashes_handle()
             .at(&processing_epoch)
             .at(validator)
@@ -1352,7 +1353,7 @@ impl AbstractStateMachine for AbstractPosState {
                 );
 
                 let processing_epoch =
-                    *infraction_epoch + state.params.unbonding_len;
+                    *infraction_epoch + state.params.unbonding_len + 1_u64;
                 let slash = Slash {
                     epoch: *infraction_epoch,
                     block_height: *height,
@@ -1976,6 +1977,7 @@ impl AbstractPosState {
             .cloned()
             .unwrap_or_default();
         if !slashes_this_epoch.is_empty() {
+            let infraction_epoch = self.epoch - self.params.unbonding_len - 1;
             // Now need to basically do the end_of_epoch() procedure
             // from the Informal Systems model
             let cubic_rate = self.cubic_slash_rate();
@@ -1989,6 +1991,7 @@ impl AbstractPosState {
                     .unwrap_or_default();
 
                 for slash in slashes {
+                    debug_assert_eq!(slash.epoch, infraction_epoch);
                     let rate = cmp::max(
                         slash.r#type.get_slash_rate(&self.params),
                         cubic_rate,
@@ -2006,7 +2009,7 @@ impl AbstractPosState {
                     cur_slashes.push(processed_slash.clone());
 
                     let mut total_unbonded = token::Amount::default();
-                    for epoch in (slash.epoch.0 + 1)..=self.epoch.0 {
+                    for epoch in (slash.epoch.0 + 1)..self.epoch.0 {
                         let unbond_records = self
                             .unbond_records
                             .entry(validator.clone())
@@ -2015,7 +2018,7 @@ impl AbstractPosState {
                             .cloned()
                             .unwrap_or_default();
                         for record in unbond_records {
-                            if record.start > slash.epoch {
+                            if record.start > infraction_epoch {
                                 continue;
                             }
                             let mut slashes_for_this_unbond = self
@@ -2040,7 +2043,7 @@ impl AbstractPosState {
                         }
                     }
                     let mut last_slash = token::Change::default();
-                    for offset in 1..=self.params.pipeline_len {
+                    for offset in 0..self.params.pipeline_len {
                         let unbond_records = self
                             .unbond_records
                             .get(&validator)
@@ -2049,6 +2052,9 @@ impl AbstractPosState {
                             .cloned()
                             .unwrap_or_default();
                         for record in unbond_records {
+                            if record.start > infraction_epoch {
+                                continue;
+                            }
                             let mut slashes_for_this_unbond = self
                                 .validator_slashes
                                 .get(&validator)

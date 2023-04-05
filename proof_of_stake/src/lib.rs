@@ -1559,6 +1559,7 @@ where
             continue;
         }
         let (bond_epoch, bond_amnt) = bond.unwrap();
+        println!("Bond (epoch, amnt) = ({}, {})", bond_epoch, bond_amnt);
         let bond_amount = token::Amount::from_change(bond_amnt);
 
         let to_unbond = cmp::min(bond_amount, remaining);
@@ -2852,7 +2853,7 @@ where
         let total_stake =
             Decimal::from(read_total_stake(storage, params, epoch)?);
 
-        let processing_epoch = epoch + params.unbonding_len;
+        let processing_epoch = epoch + params.unbonding_len + 1_u64;
         let slashes = enqueued_slashes_handle().at(&processing_epoch);
         let infracting_stake = slashes
             .iter(storage)?
@@ -2967,7 +2968,8 @@ where
         r#type: slash_type,
         rate: Decimal::ZERO, // Let the rate be 0 initially before processing
     };
-    let processing_epoch = evidence_epoch + params.unbonding_len;
+    // Need `+1` because we process at the beginning of a new epoch
+    let processing_epoch = evidence_epoch + params.unbonding_len + 1_u64;
     let pipeline_epoch = current_epoch + params.pipeline_len;
 
     // Add the slash to the list of enqueued slashes to be processed at a later
@@ -2986,11 +2988,11 @@ where
         write_validator_last_slash_epoch(storage, validator, evidence_epoch)?;
     }
 
-    // Remove the validator from the set immediately and up thru the pipeline
-    // epoch.
-    // TODO: possibly don't do this for current epoch - check Informal spec and
-    // w others
-    for epoch in Epoch::iter_bounds_inclusive(current_epoch, pipeline_epoch) {
+    // Remove the validator from the set starting at the next epoch and up thru
+    // the pipeline epoch.
+    for epoch in
+        Epoch::iter_bounds_inclusive(current_epoch.next(), pipeline_epoch)
+    {
         let prev_state = validator_state_handle(validator)
             .get(storage, epoch, params)?
             .expect("Expected to find a valid validator.");
@@ -3081,19 +3083,23 @@ where
 
     println!(
         "\nWRITING VALIDATOR {} STATE AS JAILED STARTING IN EPOCH {}\n",
-        validator, current_epoch
+        validator,
+        current_epoch.next()
     );
-
-    println!("POST Validator Set");
-
     // Set the validator state as `Jailed` thru the pipeline epoch
-    for offset in 0..=params.pipeline_len {
+    for offset in 1..=params.pipeline_len {
         validator_state_handle(validator).set(
             storage,
             ValidatorState::Jailed,
             current_epoch,
             offset,
         )?;
+    }
+
+    // Debugging
+    println!("POST Validator Set");
+
+    for offset in 0..=params.pipeline_len {
         println!("Epoch {}", current_epoch.0 + offset);
         for wv in read_consensus_validator_set_addresses_with_stake(
             storage,
@@ -3127,7 +3133,6 @@ where
         }
         println!("");
     }
-
     // No other actions are performed here until the epoch in which the slash is
     // processed.
 
@@ -3147,10 +3152,10 @@ where
     let params = read_pos_params(storage)?;
 
     // TODO: check if correct bounds
-    if current_epoch.0 < params.unbonding_len {
+    if current_epoch.0 < params.unbonding_len + 1 {
         return Ok(());
     }
-    let infraction_epoch = current_epoch - params.unbonding_len;
+    let infraction_epoch = current_epoch - params.unbonding_len - 1;
 
     // Slashes to be processed in the current epoch
     let enqueued_slashes = enqueued_slashes_handle().at(&current_epoch);
@@ -3236,11 +3241,11 @@ where
                 .push(storage, enqueued_slash.clone())?;
 
             // Find the total unbonded amount, accounting for slashes, from the
-            // slash epoch up to the current epoch first
+            // slash epoch up to the last epoch first
             let mut total_unbonded = token::Amount::default();
             for epoch in Epoch::iter_bounds_inclusive(
                 infraction_epoch.next(),
-                current_epoch,
+                current_epoch.prev(),
             ) {
                 let unbonds = unbond_records_handle(&validator).at(&epoch);
                 for unbond in unbonds.iter(storage)? {
@@ -3290,7 +3295,8 @@ where
 
             // Compute the adjusted validator deltas and slashed amounts
             let mut last_slash = token::Amount::default();
-            for offset in 1..=params.pipeline_len {
+            // TODO: make sure these offsets are consistent with Informal spec!
+            for offset in 0..params.pipeline_len {
                 println!("Epoch {}", current_epoch + offset);
                 let unbonds = unbond_records_handle(&validator)
                     .at(&(current_epoch + offset));
@@ -3465,7 +3471,8 @@ where
     let last_infraction_epoch =
         read_validator_last_slash_epoch(storage, validator)?;
     if let Some(last_epoch) = last_infraction_epoch {
-        let is_frozen = current_epoch < last_epoch + params.unbonding_len;
+        let is_frozen =
+            current_epoch < last_epoch + params.unbonding_len + 1_u64;
         Ok(is_frozen)
     } else {
         Ok(false)

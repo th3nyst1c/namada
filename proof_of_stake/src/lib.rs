@@ -3000,7 +3000,9 @@ where
     }
 
     // Remove the validator from the set immediately and up thru the pipeline
-    // epoch
+    // epoch.
+    // TODO: possibly don't do this for current epoch - check Informal spec and
+    // w others
     for epoch in Epoch::iter_bounds_inclusive(current_epoch, pipeline_epoch) {
         let prev_state = validator_state_handle(validator)
             .get(storage, epoch, params)?
@@ -3211,8 +3213,7 @@ where
     }
 
     let mut total_slashed = token::Change::default();
-    let mut deltas_for_update: Vec<(Address, Epoch, token::Change)> =
-        Vec::new();
+    let mut deltas_for_update: Vec<(Address, u64, token::Change)> = Vec::new();
 
     // Store the final processed slashes to their corresponding validators, then
     // update the deltas
@@ -3243,11 +3244,16 @@ where
             // Find the total unbonded amount, accounting for slashes, from the
             // slash epoch up to the current epoch first
             let mut total_unbonded = token::Amount::default();
-            for epoch in (enqueued_slash.epoch.0 + 1)..=current_epoch.0 {
-                let unbonds =
-                    unbond_records_handle(&validator).at(&Epoch(epoch));
+            for epoch in Epoch::iter_bounds_inclusive(
+                infraction_epoch.next(),
+                current_epoch,
+            ) {
+                let unbonds = unbond_records_handle(&validator).at(&epoch);
                 for unbond in unbonds.iter(storage)? {
                     let unbond = unbond?;
+                    if unbond.start <= infraction_epoch {
+                        continue;
+                    }
                     let mut prev_slashes = Vec::<Slash>::new();
                     for val_slash in
                         validator_slashes_handle(&validator).iter(storage)?
@@ -3255,7 +3261,8 @@ where
                         let val_slash = val_slash?;
                         if unbond.start <= val_slash.epoch
                             && val_slash.epoch + params.unbonding_len
-                                < enqueued_slash.epoch
+                                < infraction_epoch
+                        // TODO: this `<` should maybe be a `<=`
                         {
                             prev_slashes.push(val_slash);
                         }
@@ -3279,10 +3286,9 @@ where
 
                 for unbond in unbonds.iter(storage)? {
                     dbg!(&unbond);
-
                     let unbond = unbond?;
 
-                    if unbond.start > enqueued_slash.epoch {
+                    if unbond.start > infraction_epoch {
                         continue;
                     }
 
@@ -3293,7 +3299,8 @@ where
                         let val_slash = val_slash?;
                         if unbond.start <= val_slash.epoch
                             && val_slash.epoch + params.unbonding_len
-                                < enqueued_slash.epoch
+                                < infraction_epoch
+                        // TODO: this `<` should maybe be a `<=`
                         {
                             prev_slashes.push(val_slash);
                         }
@@ -3317,7 +3324,7 @@ where
                 let diff_slashed_amount = (this_slash - last_slash).change();
                 deltas_for_update.push((
                     validator.clone(),
-                    current_epoch + offset,
+                    offset,
                     diff_slashed_amount,
                 ));
 
@@ -3328,13 +3335,18 @@ where
         }
     }
     // Update the deltas in storage
-    for (validator, epoch, delta) in deltas_for_update {
+    for (validator, offset, delta) in deltas_for_update {
         // TODO: may need to amend this function to take the offset as a param
         // too (since it automatically uses pipeline within)
         update_validator_deltas(
-            storage, &params, &validator, -delta, epoch, 0,
+            storage,
+            &params,
+            &validator,
+            -delta,
+            current_epoch,
+            offset,
         )?;
-        update_total_deltas(storage, &params, -delta, epoch, 0)?;
+        update_total_deltas(storage, &params, -delta, current_epoch, offset)?;
     }
 
     // Transfer all slashed tokens from PoS account to Slash Pool address

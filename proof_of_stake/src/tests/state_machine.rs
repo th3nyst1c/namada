@@ -1710,7 +1710,25 @@ impl AbstractStateMachine for AbstractPosState {
                     && current_epoch.0 - infraction_epoch.0
                         <= state.params.unbonding_len;
 
-                is_validator && valid_epoch
+                // Only misbehave when there is more than one validator that's
+                // not jailed, so there's always at least one honest left
+                let enough_honest_validators = || {
+                    state
+                        .validator_states
+                        .get(&state.pipeline())
+                        .unwrap()
+                        .iter()
+                        .filter(|(addr, val_state)| match val_state {
+                            ValidatorState::Consensus
+                            | ValidatorState::BelowCapacity => true,
+                            ValidatorState::Inactive
+                            | ValidatorState::Jailed => false,
+                        })
+                        .count()
+                        > 1
+                };
+
+                is_validator && valid_epoch & enough_honest_validators()
 
                 // TODO: any others conditions?
             }

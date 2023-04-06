@@ -163,7 +163,6 @@ impl StateMachineTest for ConcretePosState {
                 super::process_slashes(&mut state.s, current_epoch).unwrap();
 
                 let params = read_pos_params(&state.s).unwrap();
-                state.check_global_post_conditions(&params, current_epoch);
                 state.check_next_epoch_post_conditions(&params);
             }
             Transition::InitValidator {
@@ -186,7 +185,6 @@ impl StateMachineTest for ConcretePosState {
                 .unwrap();
 
                 let params = read_pos_params(&state.s).unwrap();
-                state.check_global_post_conditions(&params, current_epoch);
                 state.check_init_validator_post_conditions(
                     current_epoch,
                     &params,
@@ -257,7 +255,6 @@ impl StateMachineTest for ConcretePosState {
                 .unwrap();
 
                 let params = read_pos_params(&state.s).unwrap();
-                state.check_global_post_conditions(&params, current_epoch);
                 state.check_bond_post_conditions(
                     current_epoch,
                     &params,
@@ -323,7 +320,6 @@ impl StateMachineTest for ConcretePosState {
                 .unwrap();
 
                 let params = read_pos_params(&state.s).unwrap();
-                state.check_global_post_conditions(&params, current_epoch);
                 state.check_unbond_post_conditions(
                     current_epoch,
                     &params,
@@ -365,9 +361,6 @@ impl StateMachineTest for ConcretePosState {
                 )
                 .unwrap();
 
-                let params = read_pos_params(&state.s).unwrap();
-                state.check_global_post_conditions(&params, current_epoch);
-
                 let src_balance_post =
                     token::read_balance(&state.s, &native_token, &source)
                         .unwrap();
@@ -408,7 +401,6 @@ impl StateMachineTest for ConcretePosState {
 
                 // Apply some post-conditions
                 let params = read_pos_params(&state.s).unwrap();
-                state.check_global_post_conditions(&params, current_epoch);
                 state.check_misbehavior_post_conditions(
                     &params,
                     current_epoch,
@@ -428,14 +420,17 @@ impl StateMachineTest for ConcretePosState {
 
                 // Post-conditions
                 let params = read_pos_params(&state.s).unwrap();
-                state.check_global_post_conditions(&params, current_epoch);
                 state.check_unjail_validator_post_conditions(&params, &address);
             }
         }
         state
     }
 
-    fn invariants(_state: &Self::ConcreteState) {}
+    fn invariants(state: &Self::ConcreteState) {
+        let current_epoch = state.current_epoch();
+        let params = read_pos_params(&state.s).unwrap();
+        state.check_global_post_conditions(&params, current_epoch);
+    }
 
     // Overridden to add some logging, but same behavior as original
     fn test_sequential(
@@ -1133,25 +1128,25 @@ impl AbstractStateMachine for AbstractPosState {
 
         let eligible_for_unjail = state
             .validator_states
-            .get(&(state.epoch + state.params.pipeline_len))
+            .get(&state.pipeline())
             .unwrap()
             .iter()
-            .filter(|(addr, &val_state)| {
-                let addr = *addr;
+            .filter_map(|(addr, &val_state)| {
                 let last_slash_epoch =
                     state.validator_last_slash_epochs.get(addr);
 
                 if let Some(last_slash_epoch) = last_slash_epoch {
-                    val_state == ValidatorState::Jailed
+                    if val_state == ValidatorState::Jailed
                         // `last_slash_epoch` must be unbonding_len or more epochs
                         // before the current
                         && state.epoch.0 - last_slash_epoch.0
                             > state.params.unbonding_len
-                } else {
-                    false
+                    {
+                        return Some(addr.clone());
+                    }
                 }
+                None
             })
-            .map(|(validator, _)| validator.clone())
             .collect::<Vec<_>>();
 
         // TODO: need to get list of jailed validators eligible to be
@@ -1187,18 +1182,22 @@ impl AbstractStateMachine for AbstractPosState {
                 ),
         ];
 
-        if unbondable.is_empty() {
-            if eligible_for_unjail.is_empty() {
-                basic.boxed()
-            } else {
-                prop_oneof![
-                    basic,
-                    prop::sample::select(eligible_for_unjail).prop_map(
-                        |address| { Transition::UnjailValidator { address } }
-                    )
-                ]
-                .boxed()
-            }
+        // Add unjailing, if any eligible
+        let transitions = if eligible_for_unjail.is_empty() {
+            basic.boxed()
+        } else {
+            prop_oneof![
+                basic,
+                prop::sample::select(eligible_for_unjail).prop_map(|address| {
+                    Transition::UnjailValidator { address }
+                })
+            ]
+            .boxed()
+        };
+
+        // Add unbonds, if any
+        let transitions = if unbondable.is_empty() {
+            transitions
         } else {
             let arb_unbondable = prop::sample::select(unbondable);
             let arb_unbond =
@@ -1211,43 +1210,18 @@ impl AbstractStateMachine for AbstractPosState {
                         Transition::Unbond { id, amount }
                     })
                 });
+            prop_oneof![transitions, arb_unbond].boxed()
+        };
 
-            if withdrawable.is_empty() {
-                if eligible_for_unjail.is_empty() {
-                    prop_oneof![basic, arb_unbond].boxed()
-                } else {
-                    prop_oneof![
-                        basic,
-                        arb_unbond,
-                        prop::sample::select(eligible_for_unjail).prop_map(
-                            |address| {
-                                Transition::UnjailValidator { address }
-                            }
-                        )
-                    ]
-                    .boxed()
-                }
-            } else {
-                let arb_withdrawable = prop::sample::select(withdrawable);
-                let arb_withdrawal = arb_withdrawable
-                    .prop_map(|(id, _)| Transition::Withdraw { id });
+        // Add withdrawals, if any
+        if withdrawable.is_empty() {
+            transitions
+        } else {
+            let arb_withdrawable = prop::sample::select(withdrawable);
+            let arb_withdrawal = arb_withdrawable
+                .prop_map(|(id, _)| Transition::Withdraw { id });
 
-                if eligible_for_unjail.is_empty() {
-                    prop_oneof![basic, arb_unbond, arb_withdrawal].boxed()
-                } else {
-                    prop_oneof![
-                        basic,
-                        arb_unbond,
-                        arb_withdrawal,
-                        prop::sample::select(eligible_for_unjail).prop_map(
-                            |address| {
-                                Transition::UnjailValidator { address }
-                            }
-                        )
-                    ]
-                    .boxed()
-                }
-            }
+            prop_oneof![transitions, arb_withdrawal].boxed()
         }
     }
 
@@ -1262,133 +1236,10 @@ impl AbstractStateMachine for AbstractPosState {
                 state.epoch = state.epoch.next();
 
                 // Copy the non-delta data into pipeline epoch from its pred.
-                state.copy_discrete_epoched_data(
-                    state.epoch + state.params.pipeline_len,
-                );
+                state.copy_discrete_epoched_data(state.pipeline());
 
-                // Process enqueued slashes
-                let slashes_this_epoch = state
-                    .enqueued_slashes
-                    .get(&state.epoch)
-                    .cloned()
-                    .unwrap_or_default();
-                if !slashes_this_epoch.is_empty() {
-                    // Now need to basically do the end_of_epoch() procedure
-                    // from the Informal Systems model
-                    let cubic_rate = state.cubic_slash_rate();
-                    for (validator, slashes) in slashes_this_epoch {
-                        let stake = state
-                            .validator_stakes
-                            .get(&state.epoch)
-                            .unwrap()
-                            .get(&validator)
-                            .cloned()
-                            .unwrap_or_default();
+                state.process_enqueued_slashes();
 
-                        for slash in slashes {
-                            let rate = cmp::max(
-                                slash.r#type.get_slash_rate(&state.params),
-                                cubic_rate,
-                            );
-                            let processed_slash = Slash {
-                                epoch: slash.epoch,
-                                block_height: slash.block_height,
-                                r#type: slash.r#type,
-                                rate,
-                            };
-                            let cur_slashes = state
-                                .validator_slashes
-                                .entry(validator.clone())
-                                .or_default();
-                            cur_slashes.push(processed_slash.clone());
-
-                            let mut total_unbonded = token::Amount::default();
-                            for epoch in (slash.epoch.0 + 1)..=state.epoch.0 {
-                                let unbond_records = state
-                                    .unbond_records
-                                    .entry(validator.clone())
-                                    .or_default()
-                                    .get(&Epoch(epoch))
-                                    .cloned()
-                                    .unwrap_or_default();
-                                for record in unbond_records {
-                                    if record.start > slash.epoch {
-                                        continue;
-                                    }
-                                    let mut slashes_for_this_unbond = state
-                                        .validator_slashes
-                                        .get(&validator)
-                                        .cloned()
-                                        .unwrap_or_default()
-                                        .iter()
-                                        .filter(|&s| {
-                                            record.start <= s.epoch
-                                                && s.epoch
-                                                    + state.params.unbonding_len
-                                                    < slash.epoch
-                                        })
-                                        .cloned()
-                                        .collect::<Vec<Slash>>();
-
-                                    total_unbonded += state
-                                        .compute_amount_after_slashing(
-                                            &mut slashes_for_this_unbond,
-                                            record.amount,
-                                        );
-                                }
-                            }
-                            let mut last_slash = token::Change::default();
-                            for offset in 1..=state.params.pipeline_len {
-                                let unbond_records = state
-                                    .unbond_records
-                                    .get(&validator)
-                                    .unwrap()
-                                    .get(&(state.epoch + offset))
-                                    .cloned()
-                                    .unwrap_or_default();
-                                for record in unbond_records {
-                                    let mut slashes_for_this_unbond = state
-                                        .validator_slashes
-                                        .get(&validator)
-                                        .cloned()
-                                        .unwrap_or_default()
-                                        .iter()
-                                        .filter(|&s| {
-                                            record.start <= s.epoch
-                                                && s.epoch
-                                                    + state.params.unbonding_len
-                                                    < slash.epoch
-                                        })
-                                        .cloned()
-                                        .collect::<Vec<Slash>>();
-
-                                    total_unbonded += state
-                                        .compute_amount_after_slashing(
-                                            &mut slashes_for_this_unbond,
-                                            record.amount,
-                                        );
-                                }
-                                let this_slash = decimal_mult_i128(
-                                    slash.rate,
-                                    stake - total_unbonded.change(),
-                                );
-                                let diff_slashed_amount =
-                                    this_slash - last_slash;
-                                last_slash = this_slash;
-                                total_unbonded = token::Amount::default();
-
-                                // Update the voting powers
-                                let validator_stake = state
-                                    .validator_stakes
-                                    .entry(state.epoch + offset)
-                                    .or_default()
-                                    .entry(validator.clone())
-                                    .or_default();
-                                *validator_stake -= diff_slashed_amount;
-                            }
-                        }
-                    }
-                }
                 // print-out the state
                 dbg!(&state.validator_stakes);
                 dbg!(&state.validator_states);
@@ -1461,9 +1312,8 @@ impl AbstractStateMachine for AbstractPosState {
                     state.update_bond(id, change);
                     state.update_validator_total_stake(&id.validator, change);
 
-                    let withdrawal_epoch = state.epoch
-                        + state.params.pipeline_len
-                        + state.params.unbonding_len;
+                    let withdrawal_epoch =
+                        state.pipeline() + state.params.unbonding_len;
                     // + 1_u64;
                     let unbonds =
                         state.unbonds.entry(withdrawal_epoch).or_default();
@@ -1655,7 +1505,7 @@ impl AbstractStateMachine for AbstractPosState {
                 dbg!(&state.below_capacity_set);
             }
             Transition::UnjailValidator { address } => {
-                let pipeline_epoch = state.epoch + state.params.pipeline_len;
+                let pipeline_epoch = state.pipeline();
 
                 println!(
                     "\nABSTRACT Unjail validator {} starting in epoch {}",
@@ -1771,7 +1621,7 @@ impl AbstractStateMachine for AbstractPosState {
                 commission_rate: _,
                 max_commission_rate_change: _,
             } => {
-                let pipeline = state.epoch + state.params.pipeline_len;
+                let pipeline = state.pipeline();
                 // The address must not belong to an existing validator
                 !state.is_validator(address, pipeline) &&
                    // There must be no delegations from this address
@@ -1779,7 +1629,7 @@ impl AbstractStateMachine for AbstractPosState {
                         &id.source != address)
             }
             Transition::Bond { id, amount: _ } => {
-                let pipeline = state.epoch + state.params.pipeline_len;
+                let pipeline = state.pipeline();
                 // The validator must be known
                 if !state.is_validator(&id.validator, pipeline) {
                     return false;
@@ -1799,7 +1649,7 @@ impl AbstractStateMachine for AbstractPosState {
                         || !state.is_validator(&id.source, pipeline))
             }
             Transition::Unbond { id, amount } => {
-                let pipeline = state.epoch + state.params.pipeline_len;
+                let pipeline = state.pipeline();
 
                 let is_unbondable = state
                     .bond_sums()
@@ -1822,7 +1672,7 @@ impl AbstractStateMachine for AbstractPosState {
                     && is_unbondable && !is_frozen
             }
             Transition::Withdraw { id } => {
-                let pipeline = state.epoch + state.params.pipeline_len;
+                let pipeline = state.pipeline();
 
                 let is_withdrawable = state
                     .withdrawable_unbonds()
@@ -1866,10 +1716,9 @@ impl AbstractStateMachine for AbstractPosState {
             }
             Transition::UnjailValidator { address } => {
                 // Validator address must be jailed thru the pipeline epoch
-                for epoch in Epoch::iter_bounds_inclusive(
-                    state.epoch,
-                    state.epoch + state.params.pipeline_len,
-                ) {
+                for epoch in
+                    Epoch::iter_bounds_inclusive(state.epoch, state.pipeline())
+                {
                     if state
                         .validator_states
                         .get(&epoch)
@@ -2101,6 +1950,128 @@ impl AbstractPosState {
         }
     }
 
+    fn process_enqueued_slashes(&mut self) {
+        let slashes_this_epoch = self
+            .enqueued_slashes
+            .get(&self.epoch)
+            .cloned()
+            .unwrap_or_default();
+        if !slashes_this_epoch.is_empty() {
+            // Now need to basically do the end_of_epoch() procedure
+            // from the Informal Systems model
+            let cubic_rate = self.cubic_slash_rate();
+            for (validator, slashes) in slashes_this_epoch {
+                let stake = self
+                    .validator_stakes
+                    .get(&self.epoch)
+                    .unwrap()
+                    .get(&validator)
+                    .cloned()
+                    .unwrap_or_default();
+
+                for slash in slashes {
+                    let rate = cmp::max(
+                        slash.r#type.get_slash_rate(&self.params),
+                        cubic_rate,
+                    );
+                    let processed_slash = Slash {
+                        epoch: slash.epoch,
+                        block_height: slash.block_height,
+                        r#type: slash.r#type,
+                        rate,
+                    };
+                    let cur_slashes = self
+                        .validator_slashes
+                        .entry(validator.clone())
+                        .or_default();
+                    cur_slashes.push(processed_slash.clone());
+
+                    let mut total_unbonded = token::Amount::default();
+                    for epoch in (slash.epoch.0 + 1)..=self.epoch.0 {
+                        let unbond_records = self
+                            .unbond_records
+                            .entry(validator.clone())
+                            .or_default()
+                            .get(&Epoch(epoch))
+                            .cloned()
+                            .unwrap_or_default();
+                        for record in unbond_records {
+                            if record.start > slash.epoch {
+                                continue;
+                            }
+                            let mut slashes_for_this_unbond = self
+                                .validator_slashes
+                                .get(&validator)
+                                .cloned()
+                                .unwrap_or_default()
+                                .iter()
+                                .filter(|&s| {
+                                    record.start <= s.epoch
+                                        && s.epoch + self.params.unbonding_len
+                                            < slash.epoch
+                                })
+                                .cloned()
+                                .collect::<Vec<Slash>>();
+
+                            total_unbonded += self
+                                .compute_amount_after_slashing(
+                                    &mut slashes_for_this_unbond,
+                                    record.amount,
+                                );
+                        }
+                    }
+                    let mut last_slash = token::Change::default();
+                    for offset in 1..=self.params.pipeline_len {
+                        let unbond_records = self
+                            .unbond_records
+                            .get(&validator)
+                            .unwrap()
+                            .get(&(self.epoch + offset))
+                            .cloned()
+                            .unwrap_or_default();
+                        for record in unbond_records {
+                            let mut slashes_for_this_unbond = self
+                                .validator_slashes
+                                .get(&validator)
+                                .cloned()
+                                .unwrap_or_default()
+                                .iter()
+                                .filter(|&s| {
+                                    record.start <= s.epoch
+                                        && s.epoch + self.params.unbonding_len
+                                            < slash.epoch
+                                })
+                                .cloned()
+                                .collect::<Vec<Slash>>();
+
+                            total_unbonded += self
+                                .compute_amount_after_slashing(
+                                    &mut slashes_for_this_unbond,
+                                    record.amount,
+                                );
+                        }
+                        let this_slash = decimal_mult_i128(
+                            slash.rate,
+                            stake - total_unbonded.change(),
+                        );
+                        let diff_slashed_amount = this_slash - last_slash;
+                        last_slash = this_slash;
+                        total_unbonded = token::Amount::default();
+
+                        // Update the voting powers
+                        let validator_stake = self
+                            .validator_stakes
+                            .entry(self.epoch + offset)
+                            .or_default()
+                            .entry(validator.clone())
+                            .or_default();
+                        *validator_stake -= diff_slashed_amount;
+                    }
+                }
+            }
+        }
+    }
+
     /// Get the pipeline epoch
     fn pipeline(&self) -> Epoch {
         self.epoch + self.params.pipeline_len
@@ -2129,14 +2100,12 @@ impl AbstractPosState {
         validator: &Address,
         epoch: Epoch,
     ) -> Option<(usize, token::Amount)> {
-        let mut is_in_consensus: Option<(usize, token::Amount)> = None;
         for (stake, vals) in self.consensus_set.get(&epoch).unwrap() {
             if let Some(index) = vals.iter().position(|val| val == validator) {
-                is_in_consensus = Some((index, *stake));
-                break;
+                return Some((index, *stake));
             }
         }
-        is_in_consensus
+        None
     }
 
     fn is_in_below_capacity_w_info(
@@ -2144,14 +2113,12 @@ impl AbstractPosState {
         validator: &Address,
         epoch: Epoch,
     ) -> Option<(usize, token::Amount)> {
-        let mut is_in_bc: Option<(usize, token::Amount)> = None;
         for (stake, vals) in self.below_capacity_set.get(&epoch).unwrap() {
             if let Some(index) = vals.iter().position(|val| val == validator) {
-                is_in_bc = Some((index, (*stake).into()));
-                break;
+                return Some((index, (*stake).into()));
             }
         }
-        is_in_bc
+        None
     }
 
     /// Find the sums of the bonds across all epochs

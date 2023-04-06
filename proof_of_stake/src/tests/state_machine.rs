@@ -1155,11 +1155,10 @@ impl AbstractStateMachine for AbstractPosState {
 
         // Transitions that can be applied if there are no bonds and unbonds
         let basic = prop_oneof![
-            Just(Transition::NextEpoch),
-            add_arb_bond_amount(state),
-            arb_delegation(state),
-            arb_slash(state),
-            (
+            3 => Just(Transition::NextEpoch),
+            5 => add_arb_bond_amount(state),
+            5 => arb_delegation(state),
+            2 => (
                 address::testing::arb_established_address(),
                 key::testing::arb_common_keypair(),
                 arb_rate(),
@@ -1180,6 +1179,7 @@ impl AbstractStateMachine for AbstractPosState {
                         }
                     },
                 ),
+            1 => arb_slash(state),
         ];
 
         // Add unjailing, if any eligible

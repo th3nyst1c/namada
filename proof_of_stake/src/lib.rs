@@ -3361,7 +3361,7 @@ where
 
                 total_slashed += diff_slashed_amount;
                 last_slash = this_slash;
-                total_unbonded = token::Amount::default();
+                // total_unbonded = token::Amount::default();
             }
         }
     }

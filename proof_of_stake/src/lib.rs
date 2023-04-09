@@ -1518,7 +1518,6 @@ where
     let bonds_handle = bond_handle(source, validator);
 
     // Make sure there are enough tokens left in the bond at the pipeline offset
-    let pipeline_epoch = current_epoch + params.pipeline_len;
     // TODO: does `remaining_at_pipeline` need to account for slashes?
     let remaining_at_pipeline = bonds_handle
         .get_sum(storage, pipeline_epoch, &params)?
@@ -1547,6 +1546,17 @@ where
     let bonds: Vec<Result<_, _>> =
         bonds_handle.get_data_handler().iter(storage)?.collect();
 
+    println!("Bonds before decrementing:");
+    for ep in Epoch::default().iter_range(params.unbonding_len * 3) {
+        println!(
+            "bond delta at epoch {}: {}",
+            ep,
+            bonds_handle
+                .get_delta_val(storage, ep, &params)?
+                .unwrap_or_default()
+        )
+    }
+
     let mut bond_iter = bonds.into_iter().rev();
 
     // Map: { bond start epoch, (new bond value, unbond value) }
@@ -1554,6 +1564,7 @@ where
         HashMap::<Epoch, (token::Amount, token::Amount)>::new();
 
     while remaining > token::Amount::default() {
+        println!("remaining = {}", remaining);
         let bond = bond_iter.next().transpose()?;
         if bond.is_none() {
             continue;
@@ -1565,6 +1576,7 @@ where
         let to_unbond = cmp::min(bond_amount, remaining);
         let new_bond_amount = bond_amount - to_unbond;
         new_bond_values_map.insert(bond_epoch, (new_bond_amount, to_unbond));
+        println!("to_unbond (init) = {}", to_unbond);
 
         let mut slashes_for_this_bond = Vec::<Slash>::new();
         for slash in validator_slashes_handle(validator).iter(storage)? {
@@ -1580,6 +1592,7 @@ where
             to_unbond,
             &mut slashes_for_this_bond,
         )?;
+        println!("Cur amnt after slashing = {}", &amount_after_slashing);
 
         let record = UnbondRecord {
             amount: to_unbond,
@@ -1609,7 +1622,7 @@ where
 
     // Update the validator set at the pipeline offset. Since unbonding from a
     // jailed validator who is no longer frozen is allowed, only update the
-    // validator set only if the validator is not jailed
+    // validator set if the validator is not jailed
     let is_jailed_at_pipeline = matches!(
         validator_state_handle(validator)
             .get(storage, pipeline_epoch, &params)?
@@ -1659,6 +1672,7 @@ fn get_slashed_amount<S>(
 where
     S: StorageRead,
 {
+    println!("\nComputing slashed amount");
     // TODO:
     // 1. consider if cubic slashing window width extends below the bond_epoch
     // 2. carefully check this logic (Informal-partnership PR 38)
@@ -1672,6 +1686,7 @@ where
 
     slashes.sort_by_key(|s| s.epoch);
     for slash in slashes {
+        println!("Slash epoch: {}, rate: {}", slash.epoch, slash.rate);
         let (infraction_epoch, slash_type) = (slash.epoch, slash.r#type);
         let mut computed_to_remove = HashSet::<usize>::new();
         for (ix, slashed_amount) in computed_amounts.iter().enumerate() {
@@ -1686,14 +1701,14 @@ where
         for item in computed_to_remove {
             computed_amounts.remove(item);
         }
-        let slash_rate = get_final_cubic_slash_rate(
-            storage,
-            params,
-            infraction_epoch,
-            slash_type,
-        )?;
+        // let slash_rate = get_final_cubic_slash_rate(
+        //     storage,
+        //     params,
+        //     infraction_epoch,
+        //     slash_type,
+        // )?;
         computed_amounts.push(SlashedAmount {
-            amount: decimal_mult_amount(slash_rate, updated_amount),
+            amount: decimal_mult_amount(slash.rate, updated_amount),
             epoch: infraction_epoch,
         });
     }
@@ -3297,7 +3312,11 @@ where
             let mut last_slash = token::Amount::default();
             // TODO: make sure these offsets are consistent with Informal spec!
             for offset in 0..params.pipeline_len {
-                println!("Epoch {}", current_epoch + offset);
+                println!(
+                    "Epoch {}\nLast slash = {}",
+                    current_epoch + offset,
+                    last_slash
+                );
                 let unbonds = unbond_records_handle(&validator)
                     .at(&(current_epoch + offset));
 

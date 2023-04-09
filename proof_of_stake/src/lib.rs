@@ -754,7 +754,7 @@ where
 /// only does consensus and bc
 pub fn read_all_validator_addresses<S>(
     storage: &S,
-    epoch: namada_core::types::storage::Epoch,
+    _epoch: namada_core::types::storage::Epoch,
 ) -> storage_api::Result<HashSet<Address>>
 where
     S: StorageRead,
@@ -1586,12 +1586,8 @@ where
             }
         }
 
-        amount_after_slashing += get_slashed_amount(
-            storage,
-            &params,
-            to_unbond,
-            &mut slashes_for_this_bond,
-        )?;
+        amount_after_slashing +=
+            get_slashed_amount(&params, to_unbond, &mut slashes_for_this_bond)?;
         println!("Cur amnt after slashing = {}", &amount_after_slashing);
 
         let record = UnbondRecord {
@@ -1663,15 +1659,11 @@ where
 // Compute a token amount after slashing, given the initial amount and a set of
 // slashes. It is assumed that the input `slashes` are those commited while the
 // `amount` was contributing to voting power.
-fn get_slashed_amount<S>(
-    storage: &S,
+fn get_slashed_amount(
     params: &PosParams,
     amount: token::Amount,
     slashes: &mut Vec<Slash>,
-) -> storage_api::Result<token::Change>
-where
-    S: StorageRead,
-{
+) -> storage_api::Result<token::Change> {
     println!("\nComputing slashed amount");
     // TODO:
     // 1. consider if cubic slashing window width extends below the bond_epoch
@@ -1687,7 +1679,7 @@ where
     slashes.sort_by_key(|s| s.epoch);
     for slash in slashes {
         println!("Slash epoch: {}, rate: {}", slash.epoch, slash.rate);
-        let (infraction_epoch, slash_type) = (slash.epoch, slash.r#type);
+        let infraction_epoch = slash.epoch;
         let mut computed_to_remove = HashSet::<usize>::new();
         for (ix, slashed_amount) in computed_amounts.iter().enumerate() {
             // Update amount with slashes that happened more than unbonding_len
@@ -1701,19 +1693,15 @@ where
         for item in computed_to_remove {
             computed_amounts.remove(item);
         }
-        // let slash_rate = get_final_cubic_slash_rate(
-        //     storage,
-        //     params,
-        //     infraction_epoch,
-        //     slash_type,
-        // )?;
         computed_amounts.push(SlashedAmount {
             amount: decimal_mult_amount(slash.rate, updated_amount),
             epoch: infraction_epoch,
         });
     }
+    println!("Finished loop over slashes in `get_slashed_amount`");
+    println!("Computed amounts: {:?}", &computed_amounts);
 
-    let final_amount = updated_amount
+    let final_amount = dbg!(updated_amount)
         - computed_amounts
             .into_iter()
             .map(|slashed| slashed.amount)
@@ -1856,12 +1844,8 @@ where
                 slashes_for_this_unbond.push(slash);
             }
         }
-        let amount_after_slashing = get_slashed_amount(
-            storage,
-            &params,
-            amount,
-            &mut slashes_for_this_unbond,
-        )?;
+        let amount_after_slashing =
+            get_slashed_amount(&params, amount, &mut slashes_for_this_unbond)?;
 
         withdrawable_amount +=
             token::Amount::from_change(amount_after_slashing);
@@ -3146,7 +3130,6 @@ where
                 )
             );
         }
-        println!("");
     }
     // No other actions are performed here until the epoch in which the slash is
     // processed.
@@ -3294,7 +3277,6 @@ where
 
                     total_unbonded +=
                         token::Amount::from_change(get_slashed_amount(
-                            storage,
                             &params,
                             unbond.amount,
                             &mut prev_slashes,
@@ -3351,7 +3333,6 @@ where
 
                     total_unbonded +=
                         token::Amount::from_change(get_slashed_amount(
-                            storage,
                             &params,
                             unbond.amount,
                             &mut prev_slashes,

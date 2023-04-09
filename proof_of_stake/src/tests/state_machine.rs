@@ -3,15 +3,14 @@
 use std::cmp;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-use borsh::BorshDeserialize;
 use itertools::Itertools;
 use namada_core::ledger::storage::testing::TestWlStorage;
 use namada_core::ledger::storage_api::collections::lazy_map::NestedSubKey;
-use namada_core::ledger::storage_api::{self, token, StorageRead};
+use namada_core::ledger::storage_api::{token, StorageRead};
 use namada_core::types::address::{self, Address};
 use namada_core::types::key;
 use namada_core::types::key::common::PublicKey;
-use namada_core::types::storage::{Epoch, Key, KeySeg};
+use namada_core::types::storage::Epoch;
 use proptest::prelude::*;
 use proptest::prop_state_machine;
 use proptest::state_machine::{AbstractStateMachine, StateMachineTest};
@@ -311,8 +310,8 @@ impl StateMachineTest for ConcretePosState {
 
                 println!(
                     "BEFORE: cur_stake = {}, pipeline_stake = {}",
-                    validator_stake_before_unbond_cur,
-                    validator_stake_before_unbond_pipeline
+                    u64::from(validator_stake_before_unbond_cur),
+                    u64::from(validator_stake_before_unbond_pipeline)
                 );
 
                 // Apply the unbond
@@ -448,7 +447,7 @@ impl StateMachineTest for ConcretePosState {
         println!("Transitions {}", transitions.len());
         for (i, transition) in transitions.into_iter().enumerate() {
             println!(
-                "Apply transition {} in epoch {}: {:#?}",
+                "\nApply transition {} in epoch {}: {:#?}",
                 i,
                 state.current_epoch(),
                 transition
@@ -617,7 +616,7 @@ impl ConcretePosState {
         )
         .unwrap()
         .unwrap_or_default();
-        println!("AFTER: pipeline stake = {}", stake_at_pipeline);
+        println!("AFTER: pipeline stake = {}", u64::from(stake_at_pipeline));
 
         // Post-condition: the validator stake at the pipeline should be
         // decremented at most by the bond amount (because slashing can reduce
@@ -1020,7 +1019,6 @@ impl ConcretePosState {
             // assert!(!vals.contains(address));         }
             //     }
             // }
-            println!("");
         }
         // TODO: expand this to include jailed validators
     }
@@ -1139,7 +1137,7 @@ impl AbstractStateMachine for AbstractPosState {
                 *val_state != ValidatorState::Jailed
             })
             .collect::<Vec<_>>();
-        dbg!(&unbondable);
+        // dbg!(&unbondable);
         let withdrawable =
             state.withdrawable_unbonds().into_iter().collect::<Vec<_>>();
 
@@ -1258,10 +1256,7 @@ impl AbstractStateMachine for AbstractPosState {
                 state.process_enqueued_slashes();
 
                 // print-out the state
-                dbg!(&state.validator_stakes);
-                dbg!(&state.validator_states);
-                dbg!(&state.consensus_set);
-                dbg!(&state.below_capacity_set);
+                state.debug_validators();
             }
             Transition::InitValidator {
                 address,
@@ -1314,10 +1309,7 @@ impl AbstractStateMachine for AbstractPosState {
                     state.update_bond(id, change);
                     state.update_validator_total_stake(&id.validator, change);
                 }
-                dbg!(&state.validator_stakes);
-                dbg!(&state.validator_states);
-                dbg!(&state.consensus_set);
-                dbg!(&state.below_capacity_set);
+                state.debug_validators();
             }
             Transition::Unbond { id, amount } => {
                 println!("\nABSTRACT Unbond {} tokens, id = {}", amount, id);
@@ -1337,10 +1329,7 @@ impl AbstractStateMachine for AbstractPosState {
                     let unbond = unbonds.entry(id.clone()).or_default();
                     *unbond += *amount;
                 }
-                dbg!(&state.validator_stakes);
-                dbg!(&state.validator_states);
-                dbg!(&state.consensus_set);
-                dbg!(&state.below_capacity_set);
+                state.debug_validators();
             }
             Transition::Withdraw { id } => {
                 println!("\nABSTRACT Withdraw, id = {}", id);
@@ -1516,10 +1505,7 @@ impl AbstractStateMachine for AbstractPosState {
                         .insert(address.clone(), *infraction_epoch);
                 }
 
-                dbg!(&state.validator_stakes);
-                dbg!(&state.validator_states);
-                dbg!(&state.consensus_set);
-                dbg!(&state.below_capacity_set);
+                state.debug_validators();
             }
             Transition::UnjailValidator { address } => {
                 let pipeline_epoch = state.pipeline();
@@ -1566,7 +1552,7 @@ impl AbstractStateMachine for AbstractPosState {
                     validator_states_pipeline
                         .insert(address.clone(), ValidatorState::Consensus);
                 } else if let Some(mut min_consensus) =
-                    consensus_set_pipeline.last_entry()
+                    consensus_set_pipeline.first_entry()
                 {
                     let below_capacity_set_pipeline = state
                         .below_capacity_set
@@ -1574,7 +1560,8 @@ impl AbstractStateMachine for AbstractPosState {
                         .or_default();
 
                     let min_consensus_stake = *min_consensus.key();
-                    if pipeline_stake > min_consensus_stake.change() {
+                    if dbg!(pipeline_stake) > dbg!(min_consensus_stake.change())
+                    {
                         // Place into the consensus set and demote the last
                         // min_consensus validator
                         let min_validators = min_consensus.get_mut();
@@ -1587,11 +1574,9 @@ impl AbstractStateMachine for AbstractPosState {
                         below_capacity_set_pipeline
                             .entry(min_consensus_stake.into())
                             .or_default()
-                            .push_back(last_val);
-                        validator_states_pipeline.insert(
-                            address.clone(),
-                            ValidatorState::BelowCapacity,
-                        );
+                            .push_back(last_val.clone());
+                        validator_states_pipeline
+                            .insert(last_val, ValidatorState::BelowCapacity);
 
                         consensus_set_pipeline
                             .entry(token::Amount::from_change(pipeline_stake))
@@ -1616,10 +1601,7 @@ impl AbstractStateMachine for AbstractPosState {
                 } else {
                     panic!("Should not reach here I don't think")
                 }
-                dbg!(&state.validator_stakes);
-                dbg!(&state.validator_states);
-                dbg!(&state.consensus_set);
-                dbg!(&state.below_capacity_set);
+                state.debug_validators();
             }
         }
         state
@@ -1735,7 +1717,7 @@ impl AbstractStateMachine for AbstractPosState {
                         .get(&state.pipeline())
                         .unwrap()
                         .iter()
-                        .filter(|(addr, val_state)| match val_state {
+                        .filter(|(_addr, val_state)| match val_state {
                             ValidatorState::Consensus
                             | ValidatorState::BelowCapacity => true,
                             ValidatorState::Inactive
@@ -1931,11 +1913,11 @@ impl AbstractPosState {
                 // need to do a swap
                 if change >= token::Change::default() {
                     // dbg!(&consensus_set);
-                    if let Some(mut min_consensus) = consensus_set.last_entry()
+                    if let Some(mut min_consensus) = consensus_set.first_entry()
                     {
                         // dbg!(&min_consensus);
                         let min_consensus_stake = *min_consensus.key();
-                        if dbg!(min_consensus_stake) > dbg!(this_val_stake_post)
+                        if dbg!(this_val_stake_post) > dbg!(min_consensus_stake)
                         {
                             // Swap this validator with the max consensus
                             let vals = min_consensus.get_mut();
@@ -2096,7 +2078,7 @@ impl AbstractPosState {
                         );
                         let diff_slashed_amount = this_slash - last_slash;
                         last_slash = this_slash;
-                        total_unbonded = token::Amount::default();
+                        // total_unbonded = token::Amount::default();
 
                         // Update the voting powers
                         let validator_stake = self
@@ -2271,6 +2253,83 @@ impl AbstractPosState {
                 .fold(token::Amount::default(), |sum, computed| {
                     sum + computed.amount
                 })
+    }
+
+    fn debug_validators(&self) {
+        println!("DEBUG ABSTRACT VALIDATOR");
+        let current_epoch = self.epoch;
+        for epoch in
+            Epoch::iter_bounds_inclusive(current_epoch, self.pipeline())
+        {
+            println!("Epoch {}", epoch);
+            let mut min_consensus = token::Amount::from(u64::MAX);
+            let consensus = self.consensus_set.get(&epoch).unwrap();
+            for (amount, vals) in consensus {
+                if *amount < min_consensus {
+                    min_consensus = *amount;
+                }
+                for val in vals {
+                    let deltas_stake = self
+                        .validator_stakes
+                        .get(&epoch)
+                        .unwrap()
+                        .get(val)
+                        .unwrap();
+                    let val_state = self
+                        .validator_states
+                        .get(&epoch)
+                        .unwrap()
+                        .get(val)
+                        .unwrap();
+                    println!(
+                        "Consensus val {}, stake {} ({}) - ({:?})",
+                        val,
+                        u64::from(*amount),
+                        deltas_stake,
+                        val_state
+                    );
+                    debug_assert_eq!(
+                        *amount,
+                        token::Amount::from_change(*deltas_stake)
+                    );
+                    debug_assert_eq!(*val_state, ValidatorState::Consensus);
+                }
+            }
+            let mut max_bc = token::Amount::default();
+            let bc = self.below_capacity_set.get(&epoch).unwrap();
+            for (amount, vals) in bc {
+                if token::Amount::from(*amount) > max_bc {
+                    max_bc = token::Amount::from(*amount);
+                }
+                for val in vals {
+                    let deltas_stake = self
+                        .validator_stakes
+                        .get(&epoch)
+                        .unwrap()
+                        .get(val)
+                        .unwrap();
+                    let val_state = self
+                        .validator_states
+                        .get(&epoch)
+                        .unwrap()
+                        .get(val)
+                        .unwrap();
+                    println!(
+                        "Below-cap val {}, stake {} ({}) - ({:?})",
+                        val,
+                        u64::from(token::Amount::from(*amount)),
+                        deltas_stake,
+                        val_state
+                    );
+                    debug_assert_eq!(
+                        token::Amount::from(*amount),
+                        token::Amount::from_change(*deltas_stake)
+                    );
+                    debug_assert_eq!(*val_state, ValidatorState::BelowCapacity);
+                }
+            }
+            assert!(min_consensus >= max_bc);
+        }
     }
 }
 

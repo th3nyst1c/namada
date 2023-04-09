@@ -9,6 +9,7 @@ use crate::epoched::LAZY_MAP_SUB_KEY;
 pub use crate::types::*; // TODO: not sure why this needs to be public
 
 const PARAMS_STORAGE_KEY: &str = "params";
+#[allow(missing_docs)]
 pub const VALIDATOR_STORAGE_PREFIX: &str = "validator";
 const VALIDATOR_ADDRESS_RAW_HASH: &str = "address_raw_hash";
 const VALIDATOR_CONSENSUS_KEY_STORAGE_KEY: &str = "consensus_key";

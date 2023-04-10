@@ -1724,7 +1724,7 @@ impl AbstractStateMachine for AbstractPosState {
                             | ValidatorState::Jailed => false,
                         })
                         .count()
-                        > 1
+                        > 3
                 };
 
                 is_validator && valid_epoch & enough_honest_validators()

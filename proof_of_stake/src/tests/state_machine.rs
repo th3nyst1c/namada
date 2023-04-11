@@ -1039,7 +1039,7 @@ impl AbstractStateMachine for AbstractPosState {
     type Transition = Transition;
 
     fn init_state() -> BoxedStrategy<Self::State> {
-        println!("Initializing abstract state machine");
+        println!("\nInitializing abstract state machine");
         (arb_pos_params(Some(5)), arb_genesis_validators(1..10))
             .prop_map(|(params, genesis_validators)| {
                 let epoch = Epoch::default();

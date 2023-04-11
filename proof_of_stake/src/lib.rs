@@ -1699,9 +1699,10 @@ fn get_slashed_amount(
         });
     }
     println!("Finished loop over slashes in `get_slashed_amount`");
+    println!("Updated amount: {:?}", &updated_amount);
     println!("Computed amounts: {:?}", &computed_amounts);
 
-    let final_amount = dbg!(updated_amount)
+    let final_amount = updated_amount
         - computed_amounts
             .into_iter()
             .map(|slashed| slashed.amount)
@@ -2927,38 +2928,38 @@ where
     );
 
     // Debugging
-    println!("PRE Validator Set");
-    for offset in 0..=params.pipeline_len {
-        println!("Epoch {}", current_epoch.0 + offset);
-        for wv in read_consensus_validator_set_addresses_with_stake(
-            storage,
-            current_epoch + offset,
-        )? {
-            println!(
-                "Consensus val {}, stake {}, state {:?}",
-                &wv.address,
-                u64::from(wv.bonded_stake),
-                validator_state_handle(&wv.address)
-                    .get(storage, current_epoch + offset, params)
-                    .unwrap()
-            );
-        }
-        for wv in read_below_capacity_validator_set_addresses_with_stake(
-            storage,
-            current_epoch + offset,
-        )? {
-            println!(
-                "Below-cap val {}, stake {}, state {:?}",
-                &wv.address,
-                u64::from(wv.bonded_stake),
-                validator_state_handle(&wv.address).get(
-                    storage,
-                    current_epoch + offset,
-                    params
-                )
-            );
-        }
-    }
+    // println!("PRE Validator Set");
+    // for offset in 0..=params.pipeline_len {
+    //     println!("Epoch {}", current_epoch.0 + offset);
+    //     for wv in read_consensus_validator_set_addresses_with_stake(
+    //         storage,
+    //         current_epoch + offset,
+    //     )? {
+    //         println!(
+    //             "Consensus val {}, stake {}, state {:?}",
+    //             &wv.address,
+    //             u64::from(wv.bonded_stake),
+    //             validator_state_handle(&wv.address)
+    //                 .get(storage, current_epoch + offset, params)
+    //                 .unwrap()
+    //         );
+    //     }
+    //     for wv in read_below_capacity_validator_set_addresses_with_stake(
+    //         storage,
+    //         current_epoch + offset,
+    //     )? {
+    //         println!(
+    //             "Below-cap val {}, stake {}, state {:?}",
+    //             &wv.address,
+    //             u64::from(wv.bonded_stake),
+    //             validator_state_handle(&wv.address).get(
+    //                 storage,
+    //                 current_epoch + offset,
+    //                 params
+    //             )
+    //         );
+    //     }
+    // }
 
     let evidence_block_height: u64 = evidence_block_height.into();
     let slash = Slash {
@@ -3096,41 +3097,42 @@ where
     }
 
     // Debugging
-    println!("POST Validator Set");
+    // println!("POST Validator Set");
 
-    for offset in 0..=params.pipeline_len {
-        println!("Epoch {}", current_epoch.0 + offset);
-        for wv in read_consensus_validator_set_addresses_with_stake(
-            storage,
-            current_epoch + offset,
-        )? {
-            println!(
-                "Consensus val {}, stake {}, state {:?}",
-                &wv.address,
-                u64::from(wv.bonded_stake),
-                validator_state_handle(&wv.address).get(
-                    storage,
-                    current_epoch + offset,
-                    params
-                )
-            );
-        }
-        for wv in read_below_capacity_validator_set_addresses_with_stake(
-            storage,
-            current_epoch + offset,
-        )? {
-            println!(
-                "Below-cap val {}, stake {}, state {:?}",
-                &wv.address,
-                u64::from(wv.bonded_stake),
-                validator_state_handle(&wv.address).get(
-                    storage,
-                    current_epoch + offset,
-                    params
-                )
-            );
-        }
-    }
+    // for offset in 0..=params.pipeline_len {
+    //     println!("Epoch {}", current_epoch.0 + offset);
+    //     for wv in read_consensus_validator_set_addresses_with_stake(
+    //         storage,
+    //         current_epoch + offset,
+    //     )? {
+    //         println!(
+    //             "Consensus val {}, stake {}, state {:?}",
+    //             &wv.address,
+    //             u64::from(wv.bonded_stake),
+    //             validator_state_handle(&wv.address).get(
+    //                 storage,
+    //                 current_epoch + offset,
+    //                 params
+    //             )
+    //         );
+    //     }
+    //     for wv in read_below_capacity_validator_set_addresses_with_stake(
+    //         storage,
+    //         current_epoch + offset,
+    //     )? {
+    //         println!(
+    //             "Below-cap val {}, stake {}, state {:?}",
+    //             &wv.address,
+    //             u64::from(wv.bonded_stake),
+    //             validator_state_handle(&wv.address).get(
+    //                 storage,
+    //                 current_epoch + offset,
+    //                 params
+    //             )
+    //         );
+    //     }
+    // }
+
     // No other actions are performed here until the epoch in which the slash is
     // processed.
 

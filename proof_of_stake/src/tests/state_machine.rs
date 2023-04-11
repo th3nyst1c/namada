@@ -905,6 +905,11 @@ impl ConcretePosState {
                     u64::from(bonded_stake),
                     deltas_stake
                 );
+                assert_eq!(
+                    bonded_stake,
+                    token::Amount::from_change(deltas_stake)
+                );
+
                 let state = crate::validator_state_handle(&validator)
                     .get(&self.s, epoch, params)
                     .unwrap();
@@ -949,6 +954,11 @@ impl ConcretePosState {
                     u64::from(bonded_stake),
                     deltas_stake
                 );
+                assert_eq!(
+                    bonded_stake,
+                    token::Amount::from_change(deltas_stake)
+                );
+
                 let state = crate::validator_state_handle(&validator)
                     .get(&self.s, epoch, params)
                     .unwrap();

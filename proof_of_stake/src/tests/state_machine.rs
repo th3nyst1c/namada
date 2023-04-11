@@ -1387,9 +1387,9 @@ impl AbstractStateMachine for AbstractPosState {
                 // Remove the validator from either the consensus or
                 // below-capacity set and place it into the jailed validator set
 
-                // Remove from the validator set for every epoch up thru the
-                // pipeline
-                for offset in 0..=state.params.pipeline_len {
+                // Remove from the validator set starting at the next epoch and
+                // up thru the pipeline
+                for offset in 1..=state.params.pipeline_len {
                     let real_stake = token::Amount::from_change(
                         state
                             .validator_stakes

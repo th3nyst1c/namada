@@ -3291,7 +3291,7 @@ where
             println!("\nComputing adjusted amounts now");
 
             // Compute the adjusted validator deltas and slashed amounts
-            let mut last_slash = token::Amount::default();
+            let mut last_slash = token::Change::default();
             // TODO: make sure these offsets are consistent with Informal spec!
             for offset in 0..params.pipeline_len {
                 println!(
@@ -3346,11 +3346,12 @@ where
                 let this_slash = decimal_mult_amount(
                     enqueued_slash.rate,
                     validator_stake_at_infraction - total_unbonded,
-                );
+                )
+                .change();
                 println!("This slash = {}", this_slash);
 
                 // TODO: should `diff_slashed_amount` be negative?
-                let diff_slashed_amount = (this_slash - last_slash).change();
+                let diff_slashed_amount = last_slash - this_slash;
                 println!("Diff slashed amount = {}", diff_slashed_amount);
 
                 deltas_for_update.push((
@@ -3359,7 +3360,7 @@ where
                     diff_slashed_amount,
                 ));
 
-                total_slashed += diff_slashed_amount;
+                total_slashed -= diff_slashed_amount;
                 last_slash = this_slash;
                 // total_unbonded = token::Amount::default();
             }
@@ -3373,11 +3374,11 @@ where
             storage,
             &params,
             &validator,
-            -delta,
+            delta,
             current_epoch,
             offset,
         )?;
-        update_total_deltas(storage, &params, -delta, current_epoch, offset)?;
+        update_total_deltas(storage, &params, delta, current_epoch, offset)?;
     }
 
     // Transfer all slashed tokens from PoS account to Slash Pool address

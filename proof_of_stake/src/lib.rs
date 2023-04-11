@@ -3076,7 +3076,7 @@ where
             }
             ValidatorState::Jailed => {
                 println!("Validator already jailed");
-                return Ok(());
+                // return Ok(());
             }
         }
     }

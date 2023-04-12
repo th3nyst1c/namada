@@ -4691,7 +4691,7 @@ dependencies = [
 [[package]]
 name = "proptest"
 version = "1.0.0"
-source = "git+https://github.com/heliaxdev/proptest?branch=tomas/sm#b9517a726c032897a8b41c215147f44588b33dcc"
+source = "git+https://github.com/heliaxdev/proptest?branch=tomas/dbg-seed#084772b3c945f71925ee1f5094873f98c88bb18d"
 dependencies = [
  "bit-set",
  "bitflags",

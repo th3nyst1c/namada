@@ -1702,11 +1702,15 @@ fn get_slashed_amount(
     println!("Updated amount: {:?}", &updated_amount);
     println!("Computed amounts: {:?}", &computed_amounts);
 
+    let total_computed_amounts = computed_amounts
+        .into_iter()
+        .map(|slashed| slashed.amount)
+        .sum();
+
     let final_amount = updated_amount
-        - computed_amounts
-            .into_iter()
-            .map(|slashed| slashed.amount)
-            .sum();
+        .checked_sub(total_computed_amounts)
+        .unwrap_or_default();
+
     Ok(final_amount.change())
 }
 
@@ -3204,7 +3208,7 @@ where
         cur_slashes.push(updated_slash);
     }
 
-    let mut total_slashed = token::Change::default();
+    // let mut total_slashed = token::Change::default();
     let mut deltas_for_update: Vec<(Address, u64, token::Change)> = Vec::new();
 
     // Store the final processed slashes to their corresponding validators, then
@@ -3226,16 +3230,6 @@ where
         );
 
         for enqueued_slash in &enqueued_slashes {
-            // TODO: should we be skipping over currently jailed validators?
-            // if validator_state_handle(&validator).get(
-            //     storage,
-            //     current_epoch,
-            //     &params,
-            // )? == Some(ValidatorState::Jailed)
-            // {
-            //     continue;
-            // }
-
             // Add this slash to the list of validator's slashes in storage
             validator_slashes_handle(&validator)
                 .push(storage, enqueued_slash.clone())?;
@@ -3362,7 +3356,7 @@ where
                     diff_slashed_amount,
                 ));
 
-                total_slashed -= diff_slashed_amount;
+                // total_slashed -= diff_slashed_amount;
                 last_slash = this_slash;
                 // total_unbonded = token::Amount::default();
             }
@@ -3370,18 +3364,38 @@ where
     }
     println!("\nUpdating deltas");
     // Update the deltas in storage
+    let mut total_slashed = token::Change::default();
     for (validator, offset, delta) in deltas_for_update {
-        println!("Val {} at offset {} delta = {}", &validator, offset, -delta);
+        println!("Val {} at offset {} delta = {}", &validator, offset, delta);
+        // Check to make sure the delta from slashing does not send the total
+        // stake at any point negative
+        let stake = read_validator_stake(
+            storage,
+            &params,
+            &validator,
+            current_epoch + offset,
+        )?
+        .unwrap_or_default();
+        println!("Val stake at offset {} = {}", offset, u64::from(stake));
+        let change = if stake.change() + delta < token::Change::default() {
+            -stake.change()
+        } else {
+            delta
+        };
+        println!("change = {}", change);
+
         update_validator_deltas(
             storage,
             &params,
             &validator,
-            delta,
+            change,
             current_epoch,
             offset,
         )?;
-        update_total_deltas(storage, &params, delta, current_epoch, offset)?;
+        update_total_deltas(storage, &params, change, current_epoch, offset)?;
+        total_slashed -= change;
     }
+    println!("Total slashed = {}", total_slashed);
 
     // Transfer all slashed tokens from PoS account to Slash Pool address
     let staking_token = staking_token_address(storage);

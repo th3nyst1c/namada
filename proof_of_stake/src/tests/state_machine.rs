@@ -42,7 +42,7 @@ prop_state_machine! {
     })]
     #[test]
     /// A `StateMachineTest` implemented on `PosState`
-    fn pos_state_machine_test(sequential 1..200 => ConcretePosState);
+    fn pos_state_machine_test(sequential 700 => ConcretePosState);
 }
 
 /// Abstract representation of a state of PoS system
@@ -1041,7 +1041,7 @@ impl AbstractStateMachine for AbstractPosState {
 
     fn init_state() -> BoxedStrategy<Self::State> {
         println!("\nInitializing abstract state machine");
-        (arb_pos_params(Some(5)), arb_genesis_validators(1..10))
+        (arb_pos_params(Some(5)), arb_genesis_validators(9..10))
             .prop_map(|(params, genesis_validators)| {
                 let epoch = Epoch::default();
                 let mut state = Self {

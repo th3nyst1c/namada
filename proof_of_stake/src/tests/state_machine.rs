@@ -905,6 +905,7 @@ impl ConcretePosState {
                     u64::from(bonded_stake),
                     deltas_stake
                 );
+                assert!(deltas_stake >= 0);
                 assert_eq!(
                     bonded_stake,
                     token::Amount::from_change(deltas_stake)

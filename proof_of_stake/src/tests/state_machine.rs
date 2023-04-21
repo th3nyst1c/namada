@@ -714,12 +714,23 @@ impl ConcretePosState {
         // Post-condition: the validator should not be in the validator set
         // until the pipeline epoch
         for epoch in submit_epoch.iter_range(params.pipeline_len) {
-            // TODO: `read_all_validator_addresses` must not ignore epoch
-            // assert!(
-            //     !crate::read_all_validator_addresses(&self.s, epoch)
-            //         .unwrap()
-            //         .contains(address)
-            // );
+            assert!(
+                !crate::read_consensus_validator_set_addresses(&self.s, epoch)
+                    .unwrap()
+                    .contains(address)
+            );
+            assert!(
+                !crate::read_below_capacity_validator_set_addresses(
+                    &self.s, epoch
+                )
+                .unwrap()
+                .contains(address)
+            );
+            assert!(
+                !crate::read_all_validator_addresses(&self.s, epoch)
+                    .unwrap()
+                    .contains(address)
+            );
         }
         let weighted = WeightedValidator {
             bonded_stake: Default::default(),
@@ -2218,10 +2229,6 @@ impl AbstractPosState {
                 for delta in bonds.values() {
                     let entry = acc.entry(id.clone()).or_default();
                     *entry += *delta;
-                    // Remove entries that are fully unbonded
-                    if *entry == 0 {
-                        acc.remove(id);
-                    }
                 }
                 acc
             },

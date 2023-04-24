@@ -887,6 +887,17 @@ where
         }
     }
 
+    println!("Bonds before incrementing:");
+    for ep in Epoch::default().iter_range(current_epoch.0 + 3) {
+        let delta = bond_handle
+            .get_delta_val(storage, ep, &params)?
+            .unwrap_or_default();
+        if delta != 0 {
+            println!("bond ∆ at epoch {}: {}", ep, delta);
+        }
+    }
+    println!("");
+
     // Initialize or update the bond at the pipeline offset
     let offset = params.pipeline_len;
     let cur_remain = bond_handle
@@ -898,6 +909,17 @@ where
         cur_remain
     );
     bond_handle.set(storage, cur_remain + amount, current_epoch, offset)?;
+
+    println!("Bonds after incrementing:");
+    for ep in Epoch::default().iter_range(current_epoch.0 + 3) {
+        let delta = bond_handle
+            .get_delta_val(storage, ep, &params)?
+            .unwrap_or_default();
+        if delta != 0 {
+            println!("bond ∆ at epoch {}: {}", ep, delta);
+        }
+    }
+    println!("");
 
     // Update the validator set
     // We allow bonding if the validator is jailed, however if jailed, there
@@ -1538,6 +1560,7 @@ where
             println!("bond ∆ at epoch {}: {}", ep, delta);
         }
     }
+    println!("");
 
     // Make sure there are enough tokens left in the bond at the pipeline offset
     let remaining_at_pipeline = bonds_handle
@@ -1595,6 +1618,7 @@ where
                 slashes_for_this_bond.push(slash);
             }
         }
+        println!("{:?}", slashes_for_this_bond.clone());
 
         amount_after_slashing +=
             get_slashed_amount(&params, to_unbond, &mut slashes_for_this_bond)?;
@@ -3429,6 +3453,7 @@ where
             )?
             .unwrap_or_default()
             .change();
+            println!("Stake at offset = {}", validator_stake_at_offset);
             let change = if validator_stake_at_offset + delta
                 < token::Change::default()
             {
@@ -3436,6 +3461,8 @@ where
             } else {
                 delta
             };
+            println!("Change = {}", change);
+
             update_validator_deltas(
                 storage,
                 &params,

@@ -2891,6 +2891,7 @@ where
     for epoch in Epoch::iter_bounds_inclusive(start_epoch, end_epoch) {
         let total_stake =
             Decimal::from(read_total_stake(storage, params, epoch)?);
+        println!("Total stake in epoch {}: {}", epoch, total_stake);
 
         let processing_epoch = epoch + params.unbonding_len + 1_u64;
         let slashes = enqueued_slashes_handle().at(&processing_epoch);
@@ -2908,6 +2909,7 @@ where
                 let validator_stake =
                     read_validator_stake(storage, params, &validator, epoch)?
                         .unwrap_or_default();
+                println!("Val {} stake: {}", &validator, validator_stake);
 
                 Ok(Decimal::from(validator_stake))
                 // TODO: does something more complex need to be done
@@ -2917,6 +2919,7 @@ where
             .sum::<storage_api::Result<Decimal>>()?;
         sum_vp_fraction += infracting_stake / total_stake;
     }
+    println!("sum_vp_fraction: {}", sum_vp_fraction);
 
     // TODO: make sure `sum_vp_fraction` does not exceed 1/3 or handle with care
     // another way
@@ -3244,8 +3247,8 @@ where
         cur_slashes.push(updated_slash);
     }
 
-    // let mut total_slashed = token::Change::default();
-    let mut deltas_for_update: HashMap<Address, (u64, token::Change)> =
+    let mut total_slashed = token::Change::default();
+    let mut deltas_for_update: HashMap<Address, Vec<(u64, token::Change)>> =
         HashMap::new();
 
     // Store the final processed slashes to their corresponding validators, then
@@ -3275,6 +3278,11 @@ where
 
             total_rate += enqueued_slash.rate;
         }
+        total_rate = cmp::min(Decimal::ONE, total_rate);
+
+        total_slashed +=
+            decimal_mult_amount(total_rate, validator_stake_at_infraction)
+                .change();
 
         // Find the total amount deducted from the deltas due to unbonds that
         // became active after the infraction epoch, accounting for slashes
@@ -3398,8 +3406,9 @@ where
             let diff_slashed_amount = last_slash - this_slash;
             println!("Diff slashed amount = {}", diff_slashed_amount);
 
-            deltas_for_update
-                .insert(validator.clone(), (offset, diff_slashed_amount));
+            let val_updates =
+                deltas_for_update.entry(validator.clone()).or_default();
+            val_updates.push((offset, diff_slashed_amount));
 
             // total_slashed -= diff_slashed_amount;
             last_slash = this_slash;
@@ -3408,19 +3417,28 @@ where
     }
     println!("\nUpdating deltas");
     // Update the deltas in storage
-    let mut total_slashed = token::Change::default();
-    for (validator, (offset, delta)) in deltas_for_update {
-        println!("Val {}", &validator);
-        update_validator_deltas(
-            storage,
-            &params,
-            &validator,
-            delta,
-            current_epoch,
-            offset,
-        )?;
-        update_total_deltas(storage, &params, delta, current_epoch, offset)?;
-        total_slashed -= delta;
+    // let mut total_slashed = token::Change::default();
+    for (validator, updates) in deltas_for_update {
+        for (offset, delta) in updates {
+            println!("Val {}, offset {}, delta {}", &validator, offset, delta);
+            update_validator_deltas(
+                storage,
+                &params,
+                &validator,
+                delta,
+                current_epoch,
+                offset,
+            )?;
+            update_total_deltas(
+                storage,
+                &params,
+                delta,
+                current_epoch,
+                offset,
+            )?;
+        }
+
+        // total_slashed -= delta;
         // Check to make sure the delta from slashing does not send the
         // total stake at any point negative
         // let validator_stake_at_offset = read_validator_stake(

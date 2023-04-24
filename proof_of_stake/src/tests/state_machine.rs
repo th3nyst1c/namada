@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use itertools::Itertools;
 use namada_core::ledger::storage::testing::TestWlStorage;
 use namada_core::ledger::storage_api::collections::lazy_map::NestedSubKey;
+use namada_core::ledger::storage_api::token::read_balance;
 use namada_core::ledger::storage_api::{token, StorageRead};
 use namada_core::types::address::{self, Address};
 use namada_core::types::key;
@@ -155,8 +156,16 @@ impl StateMachineTest for ConcretePosState {
         transition: <Self::Reference as ReferenceStateMachine>::Transition,
     ) -> Self::SystemUnderTest {
         let params = crate::read_pos_params(&state.s).unwrap();
+        let pos_balance = read_balance(
+            &state.s,
+            &state.s.storage.native_token,
+            &crate::ADDRESS,
+        )
+        .unwrap();
+        println!("PoS balance: {}", pos_balance);
         match transition {
             Transition::NextEpoch => {
+                println!("\nCONCRETE Next epoch");
                 super::advance_epoch(&mut state.s, &params);
 
                 // Need to apply some slashing
@@ -172,6 +181,7 @@ impl StateMachineTest for ConcretePosState {
                 commission_rate,
                 max_commission_rate_change,
             } => {
+                println!("\nCONCRETE Init validator");
                 let current_epoch = state.current_epoch();
 
                 super::become_validator(
@@ -193,6 +203,7 @@ impl StateMachineTest for ConcretePosState {
                 )
             }
             Transition::Bond { id, amount } => {
+                println!("\nCONCRETE Bond");
                 let current_epoch = state.current_epoch();
                 let pipeline = current_epoch + params.pipeline_len;
                 let validator_stake_before_bond_cur =
@@ -281,6 +292,7 @@ impl StateMachineTest for ConcretePosState {
                 );
             }
             Transition::Unbond { id, amount } => {
+                println!("\nCONCRETE Unbond");
                 let current_epoch = state.current_epoch();
                 let pipeline = current_epoch + params.pipeline_len;
                 let native_token = state.s.get_native_token().unwrap();
@@ -350,6 +362,7 @@ impl StateMachineTest for ConcretePosState {
             Transition::Withdraw {
                 id: BondId { source, validator },
             } => {
+                println!("\nCONCRETE Withdraw");
                 let current_epoch = state.current_epoch();
                 let native_token = state.s.get_native_token().unwrap();
                 let pos = address::POS;
@@ -393,6 +406,7 @@ impl StateMachineTest for ConcretePosState {
                 infraction_epoch,
                 height,
             } => {
+                println!("\nCONCRETE Misbehavior");
                 let current_epoch = state.current_epoch();
                 // Record the slash evidence
                 super::slash(
@@ -419,6 +433,7 @@ impl StateMachineTest for ConcretePosState {
                 // TODO: Any others?
             }
             Transition::UnjailValidator { address } => {
+                println!("\nCONCRETE UnjailValidator");
                 let current_epoch = state.current_epoch();
 
                 // Unjail the validator
@@ -435,11 +450,11 @@ impl StateMachineTest for ConcretePosState {
 
     fn check_invariants(
         state: &Self::SystemUnderTest,
-        _ref_state: &<Self::Reference as ReferenceStateMachine>::State,
+        ref_state: &<Self::Reference as ReferenceStateMachine>::State,
     ) {
         let current_epoch = state.current_epoch();
         let params = read_pos_params(&state.s).unwrap();
-        state.check_global_post_conditions(&params, current_epoch);
+        state.check_global_post_conditions(&params, current_epoch, ref_state);
     }
 }
 
@@ -876,6 +891,7 @@ impl ConcretePosState {
         &self,
         params: &PosParams,
         current_epoch: Epoch,
+        ref_state: &AbstractPosState,
     ) {
         // Ensure that every validator in each set has the proper state
         for epoch in Epoch::iter_bounds_inclusive(
@@ -907,29 +923,32 @@ impl ConcretePosState {
                     bonded_stake,
                     token::Amount::from_change(deltas_stake)
                 );
+                assert_eq!(
+                    bonded_stake.change(),
+                    ref_state
+                        .validator_stakes
+                        .get(&epoch)
+                        .unwrap()
+                        .get(&validator)
+                        .cloned()
+                        .unwrap()
+                );
 
                 let state = crate::validator_state_handle(&validator)
                     .get(&self.s, epoch, params)
                     .unwrap();
-                if state.is_none() {
-                    dbg!(
-                        crate::validator_state_handle(&validator)
-                            .get(&self.s, current_epoch, params)
-                            .unwrap()
-                    );
-                    dbg!(
-                        crate::validator_state_handle(&validator)
-                            .get(&self.s, current_epoch.next(), params)
-                            .unwrap()
-                    );
-                    dbg!(
-                        crate::validator_state_handle(&validator)
-                            .get(&self.s, current_epoch.next(), params)
-                            .unwrap()
-                    );
-                }
 
                 assert_eq!(state, Some(ValidatorState::Consensus));
+                assert_eq!(
+                    state.unwrap(),
+                    ref_state
+                        .validator_states
+                        .get(&epoch)
+                        .unwrap()
+                        .get(&validator)
+                        .cloned()
+                        .unwrap()
+                );
                 assert!(!vals.contains(&validator));
                 vals.insert(validator);
             }
@@ -956,6 +975,16 @@ impl ConcretePosState {
                     bonded_stake,
                     token::Amount::from_change(deltas_stake)
                 );
+                assert_eq!(
+                    bonded_stake.change(),
+                    ref_state
+                        .validator_stakes
+                        .get(&epoch)
+                        .unwrap()
+                        .get(&validator)
+                        .cloned()
+                        .unwrap()
+                );
 
                 let state = crate::validator_state_handle(&validator)
                     .get(&self.s, epoch, params)
@@ -978,6 +1007,16 @@ impl ConcretePosState {
                     );
                 }
                 assert_eq!(state, Some(ValidatorState::BelowCapacity));
+                assert_eq!(
+                    state.unwrap(),
+                    ref_state
+                        .validator_states
+                        .get(&epoch)
+                        .unwrap()
+                        .get(&validator)
+                        .cloned()
+                        .unwrap()
+                );
                 assert!(!vals.contains(&validator));
                 vals.insert(validator);
             }
@@ -992,10 +1031,40 @@ impl ConcretePosState {
                     .unwrap();
 
                 if state == ValidatorState::Jailed {
+                    assert_eq!(
+                        state,
+                        ref_state
+                            .validator_states
+                            .get(&epoch)
+                            .unwrap()
+                            .get(&val)
+                            .cloned()
+                            .unwrap()
+                    );
                     let stake = validator_deltas_handle(&val)
                         .get_sum(&self.s, epoch, params)
                         .unwrap()
                         .unwrap_or_default();
+                    assert_eq!(
+                        state,
+                        ref_state
+                            .validator_states
+                            .get(&epoch)
+                            .unwrap()
+                            .get(&val)
+                            .cloned()
+                            .unwrap()
+                    );
+                    assert_eq!(
+                        stake,
+                        ref_state
+                            .validator_stakes
+                            .get(&epoch)
+                            .unwrap()
+                            .get(&val)
+                            .cloned()
+                            .unwrap()
+                    );
                     println!("Jailed val {}, stake {}", &val, stake);
                     assert!(!vals.contains(&val));
                 }
@@ -1097,7 +1166,7 @@ impl ReferenceStateMachine for AbstractPosState {
                 {
                     state.copy_discrete_epoched_data(epoch)
                 }
-                dbg!(&state);
+                // dbg!(&state);
                 state
             })
             .boxed()
@@ -1564,8 +1633,7 @@ impl ReferenceStateMachine for AbstractPosState {
                         .or_default();
 
                     let min_consensus_stake = *min_consensus.key();
-                    if dbg!(pipeline_stake) > dbg!(min_consensus_stake.change())
-                    {
+                    if pipeline_stake > min_consensus_stake.change() {
                         // Place into the consensus set and demote the last
                         // min_consensus validator
                         let min_validators = min_consensus.get_mut();
@@ -1922,11 +1990,10 @@ impl AbstractPosState {
             ValidatorState::Consensus => {
                 println!("Validator initially in consensus");
                 // Remove from the prior stake
-                let vals =
-                    consensus_set.entry(dbg!(this_val_stake_pre)).or_default();
-                dbg!(&vals);
+                let vals = consensus_set.entry(this_val_stake_pre).or_default();
+                // dbg!(&vals);
                 vals.retain(|addr| addr != validator);
-                dbg!(&vals);
+                // dbg!(&vals);
 
                 if vals.is_empty() {
                     consensus_set.remove(&this_val_stake_pre);
@@ -1983,7 +2050,7 @@ impl AbstractPosState {
                 let vals =
                     below_cap_set.entry(this_val_stake_pre.into()).or_default();
                 vals.retain(|addr| addr != validator);
-                if dbg!(vals).is_empty() {
+                if vals.is_empty() {
                     below_cap_set.remove(&this_val_stake_pre.into());
                 }
 
@@ -1995,8 +2062,7 @@ impl AbstractPosState {
                     {
                         // dbg!(&min_consensus);
                         let min_consensus_stake = *min_consensus.key();
-                        if dbg!(this_val_stake_post) > dbg!(min_consensus_stake)
-                        {
+                        if this_val_stake_post > min_consensus_stake {
                             // Swap this validator with the max consensus
                             let vals = min_consensus.get_mut();
                             let last_val = vals.pop_back().unwrap();
@@ -2057,13 +2123,19 @@ impl AbstractPosState {
             // from the Informal Systems model
             let cubic_rate = self.cubic_slash_rate();
             for (validator, slashes) in slashes_this_epoch {
-                let stake = self
+                let stake_at_infraction = self
                     .validator_stakes
-                    .get(&self.epoch)
+                    .get(&infraction_epoch)
                     .unwrap()
                     .get(&validator)
                     .cloned()
                     .unwrap_or_default();
+                println!(
+                    "Val {} stake at infraction {}",
+                    validator, stake_at_infraction
+                );
+
+                let mut total_rate = Decimal::ZERO;
 
                 for slash in slashes {
                     debug_assert_eq!(slash.epoch, infraction_epoch);
@@ -2083,88 +2155,112 @@ impl AbstractPosState {
                         .or_default();
                     cur_slashes.push(processed_slash.clone());
 
-                    let mut total_unbonded = token::Amount::default();
-                    for epoch in (slash.epoch.0 + 1)..self.epoch.0 {
-                        let unbond_records = self
-                            .unbond_records
-                            .entry(validator.clone())
-                            .or_default()
-                            .get(&Epoch(epoch))
-                            .cloned()
-                            .unwrap_or_default();
-                        for record in unbond_records {
-                            if record.start > infraction_epoch {
-                                continue;
-                            }
-                            let mut slashes_for_this_unbond = self
-                                .validator_slashes
-                                .get(&validator)
-                                .cloned()
-                                .unwrap_or_default()
-                                .iter()
-                                .filter(|&s| {
-                                    record.start <= s.epoch
-                                        && s.epoch + self.params.unbonding_len
-                                            < slash.epoch
-                                })
-                                .cloned()
-                                .collect::<Vec<Slash>>();
+                    total_rate += rate;
+                }
+                total_rate = cmp::min(total_rate, Decimal::ONE);
+                println!("Total rate: {}", total_rate);
 
-                            total_unbonded += compute_amount_after_slashing(
-                                &mut slashes_for_this_unbond,
-                                record.amount,
-                                self.params.unbonding_len,
-                            );
+                let mut total_unbonded = token::Amount::default();
+                for epoch in (infraction_epoch.0 + 1)..self.epoch.0 {
+                    let unbond_records = self
+                        .unbond_records
+                        .entry(validator.clone())
+                        .or_default()
+                        .get(&Epoch(epoch))
+                        .cloned()
+                        .unwrap_or_default();
+                    for record in unbond_records {
+                        if record.start > infraction_epoch {
+                            continue;
                         }
-                    }
-                    let mut last_slash = token::Change::default();
-                    for offset in 0..self.params.pipeline_len {
-                        let unbond_records = self
-                            .unbond_records
+                        let mut slashes_for_this_unbond = self
+                            .validator_slashes
                             .get(&validator)
-                            .unwrap()
-                            .get(&(self.epoch + offset))
                             .cloned()
-                            .unwrap_or_default();
-                        for record in unbond_records {
-                            if record.start > infraction_epoch {
-                                continue;
-                            }
-                            let mut slashes_for_this_unbond = self
-                                .validator_slashes
-                                .get(&validator)
-                                .cloned()
-                                .unwrap_or_default()
-                                .iter()
-                                .filter(|&s| {
-                                    record.start <= s.epoch
-                                        && s.epoch + self.params.unbonding_len
-                                            < slash.epoch
-                                })
-                                .cloned()
-                                .collect::<Vec<Slash>>();
+                            .unwrap_or_default()
+                            .iter()
+                            .filter(|&s| {
+                                record.start <= s.epoch
+                                    && s.epoch + self.params.unbonding_len
+                                        < infraction_epoch
+                            })
+                            .cloned()
+                            .collect::<Vec<Slash>>();
 
-                            total_unbonded += compute_amount_after_slashing(
-                                &mut slashes_for_this_unbond,
-                                record.amount,
-                                self.params.unbonding_len,
-                            );
-                        }
-                        let this_slash = decimal_mult_i128(
-                            slash.rate,
-                            stake - total_unbonded.change(),
+                        total_unbonded += compute_amount_after_slashing(
+                            &mut slashes_for_this_unbond,
+                            record.amount,
+                            self.params.unbonding_len,
                         );
-                        let diff_slashed_amount = this_slash - last_slash;
-                        last_slash = this_slash;
-                        // total_unbonded = token::Amount::default();
+                    }
+                }
+                let mut last_slash = token::Change::default();
+                for offset in 0..self.params.pipeline_len {
+                    let unbond_records = self
+                        .unbond_records
+                        .get(&validator)
+                        .unwrap()
+                        .get(&(self.epoch + offset))
+                        .cloned()
+                        .unwrap_or_default();
+                    for record in unbond_records {
+                        if record.start > infraction_epoch {
+                            continue;
+                        }
+                        let mut slashes_for_this_unbond = self
+                            .validator_slashes
+                            .get(&validator)
+                            .cloned()
+                            .unwrap_or_default()
+                            .iter()
+                            .filter(|&s| {
+                                record.start <= s.epoch
+                                    && s.epoch + self.params.unbonding_len
+                                        < infraction_epoch
+                            })
+                            .cloned()
+                            .collect::<Vec<Slash>>();
 
-                        // Update the voting powers
+                        total_unbonded += compute_amount_after_slashing(
+                            &mut slashes_for_this_unbond,
+                            record.amount,
+                            self.params.unbonding_len,
+                        );
+                    }
+                    println!("stake at infraction {}", stake_at_infraction);
+                    println!("total unbonded {}", total_unbonded);
+                    let this_slash = decimal_mult_i128(
+                        total_rate,
+                        stake_at_infraction - total_unbonded.change(),
+                    );
+                    let diff_slashed_amount = this_slash - last_slash;
+                    println!(
+                        "Offset {} diff_slashed_amount {}",
+                        offset, diff_slashed_amount
+                    );
+                    last_slash = this_slash;
+                    // total_unbonded = token::Amount::default();
+
+                    // Update the voting powers (consider that the stake is
+                    // discrete) let validator_stake = self
+                    //     .validator_stakes
+                    //     .entry(self.epoch + offset)
+                    //     .or_default()
+                    //     .entry(validator.clone())
+                    //     .or_default();
+                    // *validator_stake -= diff_slashed_amount;
+
+                    println!("Updating ABSTRACT voting powers");
+                    for os in offset..=self.params.pipeline_len {
+                        println!("Epoch {}", self.epoch + os);
                         let validator_stake = self
                             .validator_stakes
-                            .entry(self.epoch + offset)
+                            .entry(self.epoch + os)
                             .or_default()
                             .entry(validator.clone())
                             .or_default();
+                        println!("Val stake = {}", validator_stake);
+
                         *validator_stake -= diff_slashed_amount;
                     }
                 }
@@ -2254,13 +2350,17 @@ impl AbstractPosState {
 
     /// Compute the cubic slashing rate for the current epoch
     fn cubic_slash_rate(&self) -> Decimal {
+        let infraction_epoch = self.epoch - self.params.unbonding_len - 1_u64;
         let window_width = self.params.cubic_slashing_window_length;
         let epoch_start = Epoch::from(
-            self.epoch.0.checked_sub(window_width).unwrap_or_default(),
+            infraction_epoch
+                .0
+                .checked_sub(window_width)
+                .unwrap_or_default(),
         );
-        let epoch_end = self.epoch + window_width;
+        let epoch_end = infraction_epoch + window_width;
 
-        // Calculate cubic slashing rate with the concrete state
+        // Calculate cubic slashing rate with the abstract state
         let mut vp_frac_sum = Decimal::default();
         for epoch in Epoch::iter_bounds_inclusive(epoch_start, epoch_end) {
             let total_stake =
@@ -2270,17 +2370,21 @@ impl AbstractPosState {
                         sum + token::Amount::from_change(*val_stake)
                     },
                 );
-            let enqueued_slashes = self.enqueued_slashes.get(&epoch);
+            println!("Total stake in epoch {}: {}", epoch, total_stake);
+
+            let processing_epoch = epoch + self.params.unbonding_len + 1_u64;
+            let enqueued_slashes = self.enqueued_slashes.get(&processing_epoch);
             if let Some(enqueued_slashes) = enqueued_slashes {
                 for (validator, slashes) in enqueued_slashes.iter() {
                     let val_stake = token::Amount::from_change(
                         self.validator_stakes
-                            .get(&self.epoch)
+                            .get(&epoch)
                             .unwrap()
                             .get(validator)
                             .cloned()
                             .unwrap_or_default(),
                     );
+                    println!("Val {} stake: {}", &validator, val_stake);
                     vp_frac_sum += Decimal::from(slashes.len())
                         * Decimal::from(val_stake)
                         / Decimal::from(total_stake);
@@ -2288,6 +2392,7 @@ impl AbstractPosState {
             }
         }
         let vp_frac_sum = cmp::min(Decimal::ONE, vp_frac_sum);
+        println!("vp_frac_sum: {}", vp_frac_sum);
 
         cmp::min(dec!(9) * vp_frac_sum * vp_frac_sum, Decimal::ONE)
     }
@@ -2397,6 +2502,7 @@ fn arb_delegation(
         |mut acc, (_epoch, vals)| {
             for vals in vals.values() {
                 for validator in vals {
+                    // dbg!(validator, &state.epoch);
                     if *state
                         .validator_states
                         .get(&state.epoch)

@@ -3421,18 +3421,33 @@ where
     for (validator, updates) in deltas_for_update {
         for (offset, delta) in updates {
             println!("Val {}, offset {}, delta {}", &validator, offset, delta);
+            let validator_stake_at_offset = read_validator_stake(
+                storage,
+                &params,
+                &validator,
+                current_epoch + offset,
+            )?
+            .unwrap_or_default()
+            .change();
+            let change = if validator_stake_at_offset + delta
+                < token::Change::default()
+            {
+                -validator_stake_at_offset
+            } else {
+                delta
+            };
             update_validator_deltas(
                 storage,
                 &params,
                 &validator,
-                delta,
+                change,
                 current_epoch,
                 offset,
             )?;
             update_total_deltas(
                 storage,
                 &params,
-                delta,
+                change,
                 current_epoch,
                 offset,
             )?;
@@ -3494,13 +3509,14 @@ where
 
     // Transfer all slashed tokens from PoS account to Slash Pool address
     let staking_token = staking_token_address(storage);
-    transfer_tokens(
-        storage,
-        &staking_token,
-        token::Amount::from_change(total_slashed),
-        &ADDRESS,
-        &SLASH_POOL_ADDRESS,
-    )?;
+    // TODO: turn this back on after testing!
+    // transfer_tokens(
+    //     storage,
+    //     &staking_token,
+    //     token::Amount::from_change(total_slashed),
+    //     &ADDRESS,
+    //     &SLASH_POOL_ADDRESS,
+    // )?;
 
     Ok(())
 }

@@ -2260,8 +2260,13 @@ impl AbstractPosState {
                             .entry(validator.clone())
                             .or_default();
                         println!("Val stake = {}", validator_stake);
+                        let mut new_stake =
+                            *validator_stake - diff_slashed_amount;
+                        if new_stake < 0_i128 {
+                            new_stake = 0_i128;
+                        }
 
-                        *validator_stake -= diff_slashed_amount;
+                        *validator_stake = new_stake;
                     }
                 }
             }

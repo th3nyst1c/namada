@@ -670,10 +670,19 @@ impl ConcretePosState {
                 .iter()
                 .filter(|(_keys, addr)| addr == &id.validator)
                 .count();
+        let validator_is_jailed = crate::validator_state_handle(&id.validator)
+            .get(&self.s, pipeline, params)
+            .unwrap()
+            == Some(ValidatorState::Jailed);
 
-        // Post-condition: There must only be one instance of this validator
-        // with some stake across all validator sets
-        assert!(num_occurrences == 1);
+        // Post-condition: There must only be one instance of this validator in
+        // the consensus + below-cap sets with some stake across all
+        // validator sets, OR there are no instances and this validator is
+        // jailed
+        assert!(
+            num_occurrences == 1
+                || (num_occurrences == 0 && validator_is_jailed)
+        );
 
         let consensus_set =
             crate::read_consensus_validator_set_addresses_with_stake(
@@ -694,7 +703,13 @@ impl ConcretePosState {
 
         // Post-condition: The validator should be updated in exactly once in
         // the validator sets
-        assert!(consensus_val.is_some() ^ below_cap_val.is_some());
+        let jailed_condition = validator_is_jailed
+            && consensus_val.is_none()
+            && below_cap_val.is_none();
+        assert!(
+            (consensus_val.is_some() ^ below_cap_val.is_some())
+                || jailed_condition
+        );
 
         // Post-condition: The stake of the validators in the consensus set is
         // greater than or equal to below-capacity validators
@@ -1897,6 +1912,11 @@ impl AbstractPosState {
         let mut remaining = change;
         let mut amount_after_slashing = token::Change::default();
 
+        println!("Bonds before decrementing");
+        for (start, amnt) in bonds.iter() {
+            println!("Bond epoch {} - amnt {}", start, amnt);
+        }
+
         for (bond_epoch, bond_amnt) in bonds.iter_mut().rev() {
             println!("remaining {}", remaining);
             println!("Bond epoch {} - amnt {}", bond_epoch, bond_amnt);
@@ -2291,20 +2311,26 @@ impl AbstractPosState {
 
     /// Check if the given address is of a known validator
     fn is_validator(&self, validator: &Address, epoch: Epoch) -> bool {
-        let is_in_consensus = self
-            .consensus_set
+        // let is_in_consensus = self
+        //     .consensus_set
+        //     .get(&epoch)
+        //     .unwrap()
+        //     .iter()
+        //     .any(|(_stake, vals)| vals.iter().any(|val| val == validator));
+        // if is_in_consensus {
+        //     return true;
+        // }
+        // self.below_capacity_set
+        //     .get(&epoch)
+        //     .unwrap()
+        //     .iter()
+        //     .any(|(_stake, vals)| vals.iter().any(|val| val == validator))
+
+        self.validator_states
             .get(&epoch)
             .unwrap()
-            .iter()
-            .any(|(_stake, vals)| vals.iter().any(|val| val == validator));
-        if is_in_consensus {
-            return true;
-        }
-        self.below_capacity_set
-            .get(&epoch)
-            .unwrap()
-            .iter()
-            .any(|(_stake, vals)| vals.iter().any(|val| val == validator))
+            .keys()
+            .any(|val| val == validator)
     }
 
     fn is_in_consensus_w_info(
@@ -2493,6 +2519,40 @@ impl AbstractPosState {
                 }
             }
             assert!(min_consensus >= max_bc);
+
+            for addr in self
+                .validator_states
+                .get(&epoch)
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+            {
+                match (
+                    self.is_in_consensus_w_info(&addr, epoch),
+                    self.is_in_below_capacity_w_info(&addr, epoch),
+                ) {
+                    (None, None) => {
+                        assert_eq!(
+                            self.validator_states
+                                .get(&epoch)
+                                .unwrap()
+                                .get(&addr)
+                                .cloned(),
+                            Some(ValidatorState::Jailed)
+                        );
+                        let stake = self
+                            .validator_stakes
+                            .get(&epoch)
+                            .unwrap()
+                            .get(&addr)
+                            .cloned()
+                            .unwrap_or_default();
+                        println!("Jailed val {}, stake {}", &addr, &stake);
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 }

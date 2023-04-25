@@ -176,7 +176,7 @@ where
     {
         let last_update = self.get_last_update(storage)?;
         if let Some(last_update) = last_update {
-            if last_update < current_epoch {
+            if last_update.0 > NUM_PAST_EPOCHS && last_update < current_epoch {
                 // Go through the epochs before the expected oldest epoch and
                 // keep the latest one
                 tracing::debug!(
@@ -479,25 +479,24 @@ where
         let last_update = self.get_last_update(storage)?;
         println!("last_update: {:?}", last_update);
         if let Some(last_update) = last_update {
-            if last_update < current_epoch {
+            if last_update.0 > NUM_PAST_EPOCHS && last_update < current_epoch {
                 // Go through the epochs before the expected oldest epoch and
                 // sum them into it
                 tracing::debug!(
                     "Trimming data for epoched delta data in epoch \
                      {current_epoch}, last updated at {last_update}."
                 );
-                let new_oldest_epoch = Self::sub_past_epochs(current_epoch);
-                let oldest_epoch_pre = Self::sub_past_epochs(last_update);
-                let diff = new_oldest_epoch
-                    .checked_sub(oldest_epoch_pre)
+                let diff = current_epoch
+                    .checked_sub(last_update)
                     .unwrap_or_default()
                     .0;
+                let oldest_epoch = Self::sub_past_epochs(last_update);
                 println!("diff: {:?}", diff);
-                println!("oldest_epoch: {:?}", oldest_epoch_pre);
+                println!("oldest_epoch: {:?}", oldest_epoch);
                 let data_handler = self.get_data_handler();
                 // Find the sum of values before the new oldest epoch to be kept
                 let mut sum: Option<Data> = None;
-                for epoch in oldest_epoch_pre.iter_range(diff) {
+                for epoch in oldest_epoch.iter_range(diff) {
                     let removed = data_handler.remove(storage, &epoch)?;
                     if let Some(removed) = removed {
                         tracing::debug!(
@@ -510,6 +509,7 @@ where
                     }
                 }
                 if let Some(sum) = sum {
+                    let new_oldest_epoch = Self::sub_past_epochs(current_epoch);
                     let new_oldest_epoch_data =
                         match data_handler.get(storage, &new_oldest_epoch)? {
                             Some(oldest_epoch_data) => oldest_epoch_data + sum,

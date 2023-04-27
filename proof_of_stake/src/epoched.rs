@@ -175,49 +175,52 @@ where
         S: StorageWrite + StorageRead,
     {
         let last_update = self.get_last_update(storage)?;
-        if let Some(last_update) = last_update {
-            if last_update.0 > NUM_PAST_EPOCHS && last_update < current_epoch {
-                // Go through the epochs before the expected oldest epoch and
-                // keep the latest one
-                tracing::debug!(
-                    "Trimming data for epoched data in epoch {current_epoch}, \
-                     last updated at {last_update}."
-                );
+        if let Some((last_update, diff, true)) =
+            last_update.map(|last_update| {
                 let diff = current_epoch
                     .checked_sub(last_update)
                     .unwrap_or_default()
                     .0;
-                let oldest_epoch = Self::sub_past_epochs(last_update);
-                let data_handler = self.get_data_handler();
-                let mut latest_value: Option<Data> = None;
-                // Remove data before the new oldest epoch, keep the latest
-                // value
-                for epoch in oldest_epoch.iter_range(diff) {
-                    let removed = data_handler.remove(storage, &epoch)?;
-                    if removed.is_some() {
-                        tracing::debug!("Removed value at epoch {epoch}");
-                        latest_value = removed;
-                    }
+                let has_data_to_clear = diff > NUM_PAST_EPOCHS;
+                (last_update, diff, has_data_to_clear)
+            })
+        {
+            // Go through the epochs before the expected oldest epoch and
+            // keep the latest one
+            tracing::debug!(
+                "Trimming data for epoched data in epoch {current_epoch}, \
+                 last updated at {last_update}."
+            );
+            let oldest_epoch = Self::sub_past_epochs(last_update);
+            let data_handler = self.get_data_handler();
+            let mut latest_value: Option<Data> = None;
+            // Remove data before the new oldest epoch, keep the latest
+            // value
+            for epoch in oldest_epoch.iter_range(diff) {
+                let removed = data_handler.remove(storage, &epoch)?;
+                if removed.is_some() {
+                    tracing::debug!("Removed value at epoch {epoch}");
+                    latest_value = removed;
                 }
-                if let Some(latest_value) = latest_value {
-                    let new_oldest_epoch = Self::sub_past_epochs(current_epoch);
-                    // TODO we can add `contains_key` to LazyMap
-                    if data_handler.get(storage, &new_oldest_epoch)?.is_none() {
-                        tracing::debug!(
-                            "Setting latest value at epoch \
-                             {new_oldest_epoch}: {latest_value:?}"
-                        );
-                        data_handler.insert(
-                            storage,
-                            new_oldest_epoch,
-                            latest_value,
-                        )?;
-                    }
-                }
-                // Update the epoch of the last update to the current epoch
-                let key = self.get_last_update_storage_key();
-                storage.write(&key, current_epoch)?;
             }
+            if let Some(latest_value) = latest_value {
+                let new_oldest_epoch = Self::sub_past_epochs(current_epoch);
+                // TODO we can add `contains_key` to LazyMap
+                if data_handler.get(storage, &new_oldest_epoch)?.is_none() {
+                    tracing::debug!(
+                        "Setting latest value at epoch {new_oldest_epoch}: \
+                         {latest_value:?}"
+                    );
+                    data_handler.insert(
+                        storage,
+                        new_oldest_epoch,
+                        latest_value,
+                    )?;
+                }
+            }
+            // Update the epoch of the last update to the current epoch
+            let key = self.get_last_update_storage_key();
+            storage.write(&key, current_epoch)?;
         } else {
             // Set the epoch of the last update to the current epoch
             let key = self.get_last_update_storage_key();
@@ -478,57 +481,60 @@ where
     {
         let last_update = self.get_last_update(storage)?;
         println!("last_update: {:?}", last_update);
-        if let Some(last_update) = last_update {
-            if last_update.0 > NUM_PAST_EPOCHS && last_update < current_epoch {
-                // Go through the epochs before the expected oldest epoch and
-                // sum them into it
-                tracing::debug!(
-                    "Trimming data for epoched delta data in epoch \
-                     {current_epoch}, last updated at {last_update}."
-                );
+        if let Some((last_update, diff, true)) =
+            last_update.map(|last_update| {
                 let diff = current_epoch
                     .checked_sub(last_update)
                     .unwrap_or_default()
                     .0;
-                let oldest_epoch = Self::sub_past_epochs(last_update);
-                println!("diff: {:?}", diff);
-                println!("oldest_epoch: {:?}", oldest_epoch);
-                let data_handler = self.get_data_handler();
-                // Find the sum of values before the new oldest epoch to be kept
-                let mut sum: Option<Data> = None;
-                for epoch in oldest_epoch.iter_range(diff) {
-                    let removed = data_handler.remove(storage, &epoch)?;
-                    if let Some(removed) = removed {
-                        tracing::debug!(
-                            "Removed delta value at epoch {epoch}: {removed:?}"
-                        );
-                        match sum.as_mut() {
-                            Some(sum) => *sum += removed,
-                            None => sum = Some(removed),
-                        }
+                let has_data_to_clear = diff > NUM_PAST_EPOCHS;
+                (last_update, diff, has_data_to_clear)
+            })
+        {
+            // Go through the epochs before the expected oldest epoch and
+            // sum them into it
+            tracing::debug!(
+                "Trimming data for epoched delta data in epoch \
+                 {current_epoch}, last updated at {last_update}."
+            );
+            let oldest_epoch = Self::sub_past_epochs(last_update);
+            println!("diff: {:?}", diff);
+            println!("oldest_epoch: {:?}", oldest_epoch);
+            let data_handler = self.get_data_handler();
+            // Find the sum of values before the new oldest epoch to be kept
+            let mut sum: Option<Data> = None;
+            for epoch in oldest_epoch.iter_range(diff) {
+                let removed = data_handler.remove(storage, &epoch)?;
+                if let Some(removed) = removed {
+                    tracing::debug!(
+                        "Removed delta value at epoch {epoch}: {removed:?}"
+                    );
+                    match sum.as_mut() {
+                        Some(sum) => *sum += removed,
+                        None => sum = Some(removed),
                     }
                 }
-                if let Some(sum) = sum {
-                    let new_oldest_epoch = Self::sub_past_epochs(current_epoch);
-                    let new_oldest_epoch_data =
-                        match data_handler.get(storage, &new_oldest_epoch)? {
-                            Some(oldest_epoch_data) => oldest_epoch_data + sum,
-                            None => sum,
-                        };
-                    tracing::debug!(
-                        "Adding new sum at epoch {new_oldest_epoch}: \
-                         {new_oldest_epoch_data:?}"
-                    );
-                    data_handler.insert(
-                        storage,
-                        new_oldest_epoch,
-                        new_oldest_epoch_data,
-                    )?;
-                }
-                // Update the epoch of the last update to the current epoch
-                let key = self.get_last_update_storage_key();
-                storage.write(&key, current_epoch)?;
             }
+            if let Some(sum) = sum {
+                let new_oldest_epoch = Self::sub_past_epochs(current_epoch);
+                let new_oldest_epoch_data =
+                    match data_handler.get(storage, &new_oldest_epoch)? {
+                        Some(oldest_epoch_data) => oldest_epoch_data + sum,
+                        None => sum,
+                    };
+                tracing::debug!(
+                    "Adding new sum at epoch {new_oldest_epoch}: \
+                     {new_oldest_epoch_data:?}"
+                );
+                data_handler.insert(
+                    storage,
+                    new_oldest_epoch,
+                    new_oldest_epoch_data,
+                )?;
+            }
+            // Update the epoch of the last update to the current epoch
+            let key = self.get_last_update_storage_key();
+            storage.write(&key, current_epoch)?;
         } else {
             // Set the epoch of the last update to the current epoch
             let key = self.get_last_update_storage_key();

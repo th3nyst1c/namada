@@ -1738,7 +1738,8 @@ impl ReferenceStateMachine for AbstractPosState {
                 let is_frozen = if let Some(last_epoch) =
                     state.validator_last_slash_epochs.get(&id.validator)
                 {
-                    *last_epoch + state.params.unbonding_len > state.epoch
+                    *last_epoch + state.params.unbonding_len + 1u64
+                        > state.epoch
                 } else {
                     false
                 };
@@ -1930,7 +1931,10 @@ impl AbstractPosState {
                 .cloned()
                 .filter(|s| *bond_epoch <= s.epoch)
                 .collect();
-            println!("{:?}", slashes_for_this_bond.clone());
+            println!(
+                "Slashes for this unbond{:?}",
+                slashes_for_this_bond.clone()
+            );
             amount_after_slashing += compute_amount_after_slashing(
                 &mut slashes_for_this_bond,
                 token::Amount::from_change(to_unbond),

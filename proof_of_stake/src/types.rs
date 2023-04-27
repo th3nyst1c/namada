@@ -24,7 +24,7 @@ use rust_decimal::prelude::{Decimal, ToPrimitive};
 
 use crate::parameters::PosParams;
 
-// const U64_MAX: u64 = u64::MAX;
+const U64_MAX: u64 = u64::MAX;
 
 // TODO: add this to the spec
 /// Stored positions of validators in validator sets
@@ -128,7 +128,7 @@ pub type CommissionRates =
 pub type Bonds = crate::epoched::EpochedDelta<
     token::Change,
     crate::epoched::OffsetPipelineLen,
-    23,
+    U64_MAX,
 >;
 
 /// An epoched lazy set of all known active validator addresses (consensus,

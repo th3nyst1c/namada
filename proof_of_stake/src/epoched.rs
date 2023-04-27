@@ -477,7 +477,6 @@ where
         S: StorageWrite + StorageRead,
     {
         let last_update = self.get_last_update(storage)?;
-        println!("last_update: {:?}", last_update);
         if let Some(last_update) = last_update {
             if last_update < current_epoch {
                 // Go through the epochs before the expected oldest epoch and
@@ -492,8 +491,6 @@ where
                     .checked_sub(oldest_epoch_pre)
                     .unwrap_or_default()
                     .0;
-                println!("diff: {:?}", diff);
-                println!("oldest_epoch: {:?}", oldest_epoch_pre);
                 let data_handler = self.get_data_handler();
                 // Find the sum of values before the new oldest epoch to be kept
                 let mut sum: Option<Data> = None;
@@ -577,7 +574,6 @@ where
     }
 
     fn sub_past_epochs(epoch: Epoch) -> Epoch {
-        println!("NUM_PAST_EPOCHS {:?}", NUM_PAST_EPOCHS);
         Epoch(epoch.0.checked_sub(NUM_PAST_EPOCHS).unwrap_or_default())
     }
 }

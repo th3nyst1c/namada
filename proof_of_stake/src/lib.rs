@@ -1551,7 +1551,7 @@ where
     let source = source.unwrap_or(validator);
     let bonds_handle = bond_handle(source, validator);
 
-    println!("Bonds before decrementing:");
+    println!("\nBonds before decrementing:");
     for ep in Epoch::default().iter_range(current_epoch.0 + 3) {
         let delta = bonds_handle
             .get_delta_val(storage, ep, &params)?
@@ -1560,7 +1560,6 @@ where
             println!("bond ∆ at epoch {}: {}", ep, delta);
         }
     }
-    println!("");
 
     // Make sure there are enough tokens left in the bond at the pipeline offset
     let remaining_at_pipeline = bonds_handle
@@ -1597,13 +1596,14 @@ where
         HashMap::<Epoch, (token::Amount, token::Amount)>::new();
 
     while remaining > token::Amount::default() {
-        println!("remaining = {}", remaining);
         let bond = bond_iter.next().transpose()?;
         if bond.is_none() {
             continue;
         }
         let (bond_epoch, bond_amnt) = bond.unwrap();
-        println!("Bond (epoch, amnt) = ({}, {})", bond_epoch, bond_amnt);
+        println!("\nBond (epoch, amnt) = ({}, {})", bond_epoch, bond_amnt);
+        println!("remaining = {}", remaining);
+
         let bond_amount = token::Amount::from_change(bond_amnt);
 
         let to_unbond = cmp::min(bond_amount, remaining);
@@ -1618,7 +1618,7 @@ where
                 slashes_for_this_bond.push(slash);
             }
         }
-        println!("{:?}", slashes_for_this_bond.clone());
+        println!("Slashes for this bond {:?}", slashes_for_this_bond.clone());
 
         amount_after_slashing +=
             get_slashed_amount(&params, to_unbond, &mut slashes_for_this_bond)?;

@@ -480,7 +480,6 @@ where
         S: StorageWrite + StorageRead,
     {
         let last_update = self.get_last_update(storage)?;
-        println!("last_update: {:?}", last_update);
         if let Some((last_update, diff, true)) =
             last_update.map(|last_update| {
                 let diff = current_epoch
@@ -498,8 +497,6 @@ where
                  {current_epoch}, last updated at {last_update}."
             );
             let oldest_epoch = Self::sub_past_epochs(last_update);
-            println!("diff: {:?}", diff);
-            println!("oldest_epoch: {:?}", oldest_epoch);
             let data_handler = self.get_data_handler();
             // Find the sum of values before the new oldest epoch to be kept
             let mut sum: Option<Data> = None;
@@ -583,7 +580,6 @@ where
     }
 
     fn sub_past_epochs(epoch: Epoch) -> Epoch {
-        println!("NUM_PAST_EPOCHS {:?}", NUM_PAST_EPOCHS);
         Epoch(epoch.0.checked_sub(NUM_PAST_EPOCHS).unwrap_or_default())
     }
 }

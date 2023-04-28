@@ -3350,6 +3350,7 @@ where
                         prev_slashes.push(val_slash);
                     }
                 }
+                println!("Slashes for this unbond: {:?}", prev_slashes);
 
                 total_unbonded +=
                     token::Amount::from_change(get_slashed_amount(
@@ -3407,6 +3408,7 @@ where
                         prev_slashes.push(val_slash);
                     }
                 }
+                println!("Slashes for this unbond: {:?}", prev_slashes);
 
                 total_unbonded +=
                     token::Amount::from_change(get_slashed_amount(

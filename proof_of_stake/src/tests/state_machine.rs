@@ -1060,6 +1060,8 @@ impl ConcretePosState {
                         .get_sum(&self.s, epoch, params)
                         .unwrap()
                         .unwrap_or_default();
+                    println!("Jailed val {}, stake {}", &val, stake);
+
                     assert_eq!(
                         state,
                         ref_state
@@ -1080,7 +1082,6 @@ impl ConcretePosState {
                             .cloned()
                             .unwrap()
                     );
-                    println!("Jailed val {}, stake {}", &val, stake);
                     assert!(!vals.contains(&val));
                 }
             }
@@ -1189,19 +1190,8 @@ impl ReferenceStateMachine for AbstractPosState {
 
     // TODO: allow bonding to jailed val
     fn transitions(state: &Self::State) -> BoxedStrategy<Self::Transition> {
-        let unbondable = state
-            .bond_sums()
-            .into_iter()
-            .filter(|(bond_id, _)| {
-                let val_state = state
-                    .validator_states
-                    .get(&state.epoch)
-                    .unwrap()
-                    .get(&bond_id.validator)
-                    .unwrap();
-                *val_state != ValidatorState::Jailed
-            })
-            .collect::<Vec<_>>();
+        // Let preconditions filter out what unbonds are not allowed
+        let unbondable = state.bond_sums().into_iter().collect::<Vec<_>>();
 
         let withdrawable =
             state.withdrawable_unbonds().into_iter().collect::<Vec<_>>();
@@ -1234,6 +1224,7 @@ impl ReferenceStateMachine for AbstractPosState {
             4 => Just(Transition::NextEpoch),
             6 => add_arb_bond_amount(state),
             5 => arb_delegation(state),
+            3 => arb_self_bond(state),
             1 => (
                 address::testing::arb_established_address(),
                 key::testing::arb_common_keypair(),
@@ -1795,7 +1786,7 @@ impl ReferenceStateMachine for AbstractPosState {
                     && current_epoch.0 - infraction_epoch.0
                         <= state.params.unbonding_len;
 
-                // Only misbehave when there is more than one validator that's
+                // Only misbehave when there is more than 3 validators that's
                 // not jailed, so there's always at least one honest left
                 let enough_honest_validators = || {
                     state
@@ -1813,7 +1804,22 @@ impl ReferenceStateMachine for AbstractPosState {
                         > 3
                 };
 
-                is_validator && valid_epoch & enough_honest_validators()
+                // Ensure that the validator is in consensus when it misbehaves
+                // TODO: possibly also test allowing below-capacity validators
+                println!("\nVal to possibly misbehave: {}", &address);
+                let state_at_infraction = state
+                    .validator_states
+                    .get(&infraction_epoch)
+                    .unwrap()
+                    .get(&address)
+                    .unwrap();
+                let can_misbehave =
+                    *state_at_infraction == ValidatorState::Consensus;
+
+                is_validator
+                    && valid_epoch
+                    && enough_honest_validators()
+                    && can_misbehave
 
                 // TODO: any others conditions?
             }
@@ -2196,6 +2202,7 @@ impl AbstractPosState {
 
                 let mut total_unbonded = token::Amount::default();
                 for epoch in (infraction_epoch.0 + 1)..self.epoch.0 {
+                    println!("\nEpoch {}", epoch);
                     let unbond_records = self
                         .unbond_records
                         .entry(validator.clone())
@@ -2204,6 +2211,10 @@ impl AbstractPosState {
                         .cloned()
                         .unwrap_or_default();
                     for record in unbond_records {
+                        println!(
+                            "UnbondRecord: amount = {}, start_epoch {}",
+                            &record.amount, &record.start
+                        );
                         if record.start > infraction_epoch {
                             continue;
                         }
@@ -2220,16 +2231,31 @@ impl AbstractPosState {
                             })
                             .cloned()
                             .collect::<Vec<Slash>>();
-
+                        println!(
+                            "Slashes for this unbond: {:?}",
+                            slashes_for_this_unbond
+                        );
                         total_unbonded += compute_amount_after_slashing(
                             &mut slashes_for_this_unbond,
                             record.amount,
                             self.params.unbonding_len,
                         );
+
+                        println!(
+                            "Total unbonded (epoch {}) w slashing = {}",
+                            epoch, total_unbonded
+                        );
                     }
                 }
+                println!("Computing adjusted amounts now");
+
                 let mut last_slash = token::Change::default();
                 for offset in 0..self.params.pipeline_len {
+                    println!(
+                        "Epoch {}\nLast slash = {}",
+                        self.epoch + offset,
+                        last_slash
+                    );
                     let unbond_records = self
                         .unbond_records
                         .get(&validator)
@@ -2238,9 +2264,14 @@ impl AbstractPosState {
                         .cloned()
                         .unwrap_or_default();
                     for record in unbond_records {
+                        println!(
+                            "UnbondRecord: amount = {}, start_epoch {}",
+                            &record.amount, &record.start
+                        );
                         if record.start > infraction_epoch {
                             continue;
                         }
+
                         let mut slashes_for_this_unbond = self
                             .validator_slashes
                             .get(&validator)
@@ -2254,11 +2285,19 @@ impl AbstractPosState {
                             })
                             .cloned()
                             .collect::<Vec<Slash>>();
+                        println!(
+                            "Slashes for this unbond: {:?}",
+                            slashes_for_this_unbond
+                        );
 
                         total_unbonded += compute_amount_after_slashing(
                             &mut slashes_for_this_unbond,
                             record.amount,
                             self.params.unbonding_len,
+                        );
+                        println!(
+                            "Total unbonded (offset {}) w slashing = {}",
+                            offset, total_unbonded
                         );
                     }
                     println!("stake at infraction {}", stake_at_infraction);
@@ -2285,23 +2324,49 @@ impl AbstractPosState {
                     // *validator_stake -= diff_slashed_amount;
 
                     println!("Updating ABSTRACT voting powers");
-                    for os in offset..=self.params.pipeline_len {
-                        println!("Epoch {}", self.epoch + os);
-                        let validator_stake = self
+                    let validator_stake_at_offset = self
+                        .validator_stakes
+                        .entry(self.epoch + offset)
+                        .or_default()
+                        .entry(validator.clone())
+                        .or_default();
+                    println!(
+                        "Val stake pre (epoch {}) = {}",
+                        self.epoch + offset,
+                        validator_stake_at_offset
+                    );
+                    let change = if *validator_stake_at_offset
+                        - diff_slashed_amount
+                        < 0i128
+                    {
+                        *validator_stake_at_offset
+                    } else {
+                        diff_slashed_amount
+                    };
+                    println!("Change = {}", change);
+                    *validator_stake_at_offset -= change;
+
+                    for os in (offset + 1)..=self.params.pipeline_len {
+                        println!("Adjust epoch {}", self.epoch + os);
+                        let offset_stake = self
                             .validator_stakes
                             .entry(self.epoch + os)
                             .or_default()
                             .entry(validator.clone())
                             .or_default();
-                        println!("Val stake pre = {}", validator_stake);
-                        let mut new_stake =
-                            *validator_stake - diff_slashed_amount;
-                        if new_stake < 0_i128 {
-                            new_stake = 0_i128;
-                        }
+                        *offset_stake -= change;
+                        // let mut new_stake =
+                        //     *validator_stake - diff_slashed_amount;
+                        // if new_stake < 0_i128 {
+                        //     new_stake = 0_i128;
+                        // }
 
-                        *validator_stake = new_stake;
-                        println!("New val stake = {}", validator_stake);
+                        // *validator_stake = new_stake;
+                        println!(
+                            "New stake at epoch {} = {}",
+                            self.epoch + os,
+                            offset_stake
+                        );
                     }
                 }
             }
@@ -2581,28 +2646,14 @@ fn add_arb_bond_amount(
 fn arb_delegation(
     state: &AbstractPosState,
 ) -> impl Strategy<Value = Transition> {
-    // Ensure that no bond can be generated to a jailed validator
-    let validators = state.consensus_set.iter().fold(
-        BTreeSet::new(),
-        |mut acc, (_epoch, vals)| {
-            for vals in vals.values() {
-                for validator in vals {
-                    // dbg!(validator, &state.epoch);
-                    if *state
-                        .validator_states
-                        .get(&state.epoch)
-                        .unwrap()
-                        .get(validator)
-                        .unwrap()
-                        != ValidatorState::Jailed
-                    {
-                        acc.insert(validator.clone());
-                    }
-                }
-            }
-            acc
-        },
-    );
+    // Bond is allowed to any validator in any set - including jailed validators
+    let validators = state
+        .validator_states
+        .get(&state.pipeline())
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let validator_vec = validators.clone().into_iter().collect::<Vec<_>>();
     let arb_source = address::testing::arb_non_internal_address()
         .prop_filter("Must be a non-validator address", move |addr| {
@@ -2615,6 +2666,30 @@ fn arb_delegation(
             amount,
         },
     )
+}
+
+/// Arbitrary validator self-bond
+fn arb_self_bond(
+    state: &AbstractPosState,
+) -> impl Strategy<Value = Transition> {
+    // Bond is allowed to any validator in any set - including jailed validators
+    let validator_vec = state
+        .validator_states
+        .get(&state.pipeline())
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let arb_validator = prop::sample::select(validator_vec);
+    (arb_validator, arb_bond_amount()).prop_map(|(validator, amount)| {
+        Transition::Bond {
+            id: BondId {
+                source: validator.clone(),
+                validator,
+            },
+            amount,
+        }
+    })
 }
 
 // Bond up to 10 tokens (10M micro units) to avoid overflows

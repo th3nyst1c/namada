@@ -169,11 +169,9 @@ impl StateMachineTest for ConcretePosState {
         match transition {
             Transition::NextEpoch => {
                 println!("\nCONCRETE Next epoch");
-                super::advance_epoch(&mut state.s, &params);
 
-                // Need to apply some slashing
-                let current_epoch = state.s.storage.block.epoch;
-                super::process_slashes(&mut state.s, current_epoch).unwrap();
+                // Slashing processed / applied within this function
+                super::advance_epoch(&mut state.s, &params);
 
                 let params = read_pos_params(&state.s).unwrap();
                 state.check_next_epoch_post_conditions(&params);

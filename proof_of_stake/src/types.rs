@@ -166,6 +166,17 @@ pub type ConsensusKeys = LazySet<common::PublicKey>;
 pub type ValidatorUnbondRecords =
     NestedMap<Epoch, LazyMap<Epoch, token::Amount>>;
 
+/// A validator's incoming redelegations, where the key is the bond owner
+/// address and the value is the redelegation end epoch
+pub type IncomingRedelegations = LazyMap<Address, Epoch>;
+
+/// A validator's outgoing redelegations, where the validator in question is a
+/// source validator. The outermost key is the destination validator's address,
+/// the middle key is the bond start epoch, and the innermost key is the
+/// redelegation start epoch. The internal value is the redelegated bond amount.
+pub type OutgoingRedelegations =
+    NestedMap<Address, NestedMap<Epoch, LazyMap<Epoch, token::Amount>>>;
+
 #[derive(
     Debug, Clone, BorshSerialize, BorshDeserialize, Eq, Hash, PartialEq,
 )]

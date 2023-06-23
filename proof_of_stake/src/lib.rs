@@ -57,8 +57,8 @@ use storage::{
     unbonds_for_source_prefix, unbonds_prefix, validator_address_raw_hash_key,
     validator_last_slash_key, validator_max_commission_rate_change_key,
     BondDetails, BondsAndUnbondsDetail, BondsAndUnbondsDetails,
-    ReverseOrdTokenAmount, RewardsAccumulator, SlashedAmount, UnbondDetails,
-    ValidatorUnbondRecords,
+    IncomingRedelegations, OutgoingRedelegations, ReverseOrdTokenAmount,
+    RewardsAccumulator, SlashedAmount, UnbondDetails, ValidatorUnbondRecords,
 };
 use thiserror::Error;
 use types::{
@@ -84,6 +84,8 @@ pub fn staking_token_address(storage: &impl StorageRead) -> Address {
         .get_native_token()
         .expect("Must be able to read native token address")
 }
+
+// ---- Custom errors ----
 
 #[allow(missing_docs)]
 #[derive(Error, Debug)]
@@ -238,6 +240,8 @@ impl From<UnjailValidatorError> for storage_api::Error {
     }
 }
 
+// ---- Storage handles ----
+
 /// Get the storage handle to the epoched consensus validator set
 pub fn consensus_validator_set_handle() -> ConsensusValidatorSets {
     let key = storage::consensus_validator_set_key();
@@ -364,6 +368,22 @@ pub fn delegator_rewards_products_handle(
 ) -> RewardsProducts {
     let key = storage::validator_delegation_rewards_product_key(validator);
     RewardsProducts::open(key)
+}
+
+/// Get the storage handle to a validator's incoming redelegations
+pub fn validator_incoming_redelegations_handle(
+    validator: &Address,
+) -> IncomingRedelegations {
+    let key = storage::validator_incoming_redelegations_key(validator);
+    IncomingRedelegations::open(key)
+}
+
+/// Get the storage handle to a validator's outgoing redelegations
+pub fn validator_outgoing_redelegations_handle(
+    validator: &Address,
+) -> OutgoingRedelegations {
+    let key: Key = storage::validator_outgoing_redelegations_key(validator);
+    OutgoingRedelegations::open(key)
 }
 
 /// Init genesis

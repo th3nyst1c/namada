@@ -40,6 +40,8 @@ const CONSENSUS_KEYS: &str = "consensus_keys";
 const LAST_BLOCK_PROPOSER_STORAGE_KEY: &str = "last_block_proposer";
 const CONSENSUS_VALIDATOR_SET_ACCUMULATOR_STORAGE_KEY: &str =
     "validator_rewards_accumulator";
+const VALIDATOR_INCOMING_REDELEGATIONS_KEY: &str = "incoming_redelegations";
+const VALIDATOR_OUTGOING_REDELEGATIONS_KEY: &str = "outgoing_redelegations";
 
 /// Is the given key a PoS storage key?
 pub fn is_pos_key(key: &Key) -> bool {
@@ -201,6 +203,22 @@ pub fn is_validator_self_rewards_product_key(key: &Key) -> Option<&Address> {
 pub fn validator_delegation_rewards_product_key(validator: &Address) -> Key {
     validator_prefix(validator)
         .push(&VALIDATOR_DELEGATION_REWARDS_PRODUCT_KEY.to_owned())
+        .expect("Cannot obtain a storage key")
+}
+
+/// Storage key for a validator's incoming redelegations, where the prefixed
+/// validator is the destination validator.
+pub fn validator_incoming_redelegations_key(validator: &Address) -> Key {
+    validator_prefix(validator)
+        .push(&VALIDATOR_INCOMING_REDELEGATIONS_KEY.to_owned())
+        .expect("Cannot obtain a storage key")
+}
+
+/// Storage key for a validator's outgoing redelegations, where the prefixed
+/// validator is the source validator.
+pub fn validator_outgoing_redelegations_key(validator: &Address) -> Key {
+    validator_prefix(validator)
+        .push(&VALIDATOR_OUTGOING_REDELEGATIONS_KEY.to_owned())
         .expect("Cannot obtain a storage key")
 }
 

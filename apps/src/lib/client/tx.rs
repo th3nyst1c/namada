@@ -1057,6 +1057,18 @@ pub async fn submit_unjail_validator<
     tx::submit_unjail_validator::<C, _>(client, &mut ctx.wallet, args).await
 }
 
+pub async fn submit_redelegation<C: namada::ledger::queries::Client + Sync>(
+    client: &C,
+    mut ctx: Context,
+    mut args: args::Redelegate,
+) -> Result<(), tx::Error> {
+    args.tx.chain_id = args
+        .tx
+        .chain_id
+        .or_else(|| Some(ctx.config.ledger.chain_id.clone()));
+    tx::submit_redelegation::<C, _>(client, &mut ctx.wallet, args).await
+}
+
 /// Submit transaction and wait for result. Returns a list of addresses
 /// initialized in the transaction if any. In dry run, this is always empty.
 async fn process_tx<C: namada::ledger::queries::Client + Sync>(

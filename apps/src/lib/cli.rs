@@ -1413,6 +1413,27 @@ pub mod cmds {
     }
 
     #[derive(Clone, Debug)]
+    pub struct Redelegate(pub args::Redelegate<args::CliTypes>);
+
+    impl SubCmd for Redelegate {
+        const CMD: &'static str = "redelegate";
+
+        fn parse(matches: &ArgMatches) -> Option<Self> {
+            matches
+                .subcommand_matches(Self::CMD)
+                .map(|matches| Redelegate(args::Redelegate::parse(matches)))
+        }
+
+        fn def() -> App {
+            App::new(Self::CMD)
+                .about(
+                    "Redelegate bonded tokens from one validator to another.",
+                )
+                .add_args::<args::Redelegate<args::CliTypes>>()
+        }
+    }
+
+    #[derive(Clone, Debug)]
     pub struct QueryEpoch(pub args::Query<args::CliTypes>);
 
     impl SubCmd for QueryEpoch {
@@ -2398,6 +2419,7 @@ pub mod args {
     pub const TX_TRANSFER_WASM: &str = "tx_transfer.wasm";
     pub const TX_UNBOND_WASM: &str = "tx_unbond.wasm";
     pub const TX_UNJAIL_VALIDATOR_WASM: &str = "tx_unjail_validator.wasm";
+    pub const TX_REDELEGATE_WASM: &str = "tx_redelegate.wasm";
     pub const TX_UPDATE_VP_WASM: &str = "tx_update_vp.wasm";
     pub const TX_VOTE_PROPOSAL: &str = "tx_vote_proposal.wasm";
     pub const TX_WITHDRAW_WASM: &str = "tx_withdraw.wasm";
@@ -2440,6 +2462,8 @@ pub mod args {
     pub const DATA_PATH_OPT: ArgOpt<PathBuf> = arg_opt("data-path");
     pub const DATA_PATH: Arg<PathBuf> = arg("data-path");
     pub const DECRYPT: ArgFlag = flag("decrypt");
+    pub const DESTINATION_VALIDATOR: Arg<WalletAddress> =
+        arg("destination-validator");
     pub const DONT_ARCHIVE: ArgFlag = flag("dont-archive");
     pub const DONT_PREFETCH_WASM: ArgFlag = flag("dont-prefetch-wasm");
     pub const DRY_RUN_TX: ArgFlag = flag("dry-run");
@@ -2550,6 +2574,7 @@ pub mod args {
     pub const SIGNATURES: ArgMulti<PathBuf> = arg_multi("signatures");
     pub const SOURCE: Arg<WalletAddress> = arg("source");
     pub const SOURCE_OPT: ArgOpt<WalletAddress> = SOURCE.opt();
+    pub const SOURCE_VALIDATOR: Arg<WalletAddress> = arg("source-validator");
     pub const STORAGE_KEY: Arg<storage::Key> = arg("storage-key");
     pub const SUSPEND_ACTION: ArgFlag = flag("suspend");
     pub const TIMEOUT_HEIGHT: ArgOpt<u64> = arg_opt("timeout-height");
@@ -3714,6 +3739,77 @@ pub mod args {
                      source.",
                 ))
         }
+    }
+
+    impl CliToSdk<Redelegate<SdkTypes>> for Redelegate<CliTypes> {
+        fn to_sdk(self, ctx: &mut Context) -> Redelegate<SdkTypes> {
+            Redelegate::<SdkTypes> {
+                tx: self.tx.to_sdk(ctx),
+                src_validator: ctx.get(&self.src_validator),
+                dest_validator: ctx.get(&self.src_validator),
+                owner: ctx.get(&self.owner),
+                amount: self.amount,
+                tx_code_path: self.tx_code_path.to_path_buf(),
+            }
+        }
+    }
+
+    impl Args for Redelegate<CliTypes> {
+        fn parse(matches: &ArgMatches) -> Self {
+            let tx = Tx::parse(matches);
+            let src_validator = SOURCE_VALIDATOR.parse(matches);
+            let dest_validator = DESTINATION_VALIDATOR.parse(matches);
+            let owner = OWNER.parse(matches);
+            let amount = AMOUNT.parse(matches);
+            let amount = amount
+                .canonical()
+                .increase_precision(NATIVE_MAX_DECIMAL_PLACES.into())
+                .unwrap_or_else(|e| {
+                    println!("Could not parse bond amount: {:?}", e);
+                    safe_exit(1);
+                })
+                .amount;
+            let tx_code_path = PathBuf::from(TX_UNBOND_WASM);
+            Self {
+                tx,
+                src_validator,
+                dest_validator,
+                owner,
+                amount,
+                tx_code_path,
+            }
+        }
+
+        fn def(app: App) -> App {
+            app.add_args::<Tx<CliTypes>>()
+                .arg(
+                    SOURCE_VALIDATOR
+                        .def()
+                        .help("Source validator address for the redelegation."),
+                )
+                .arg(DESTINATION_VALIDATOR.def().help(
+                    "Destination validator address for the redelegation.",
+                ))
+                .arg(OWNER.def().help(
+                    "Delegator (owner) address of the bonds that are being \
+                     redelegated.",
+                ))
+                .arg(AMOUNT.def().help("Amount of tokens to redelegate."))
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct InitProposal<C: NamadaTypes = SdkTypes> {
+        /// Common tx arguments
+        pub tx: Tx<C>,
+        /// The proposal file path
+        pub proposal_data: PathBuf,
+        /// Flag if proposal should be run offline
+        pub offline: bool,
+        /// Native token address
+        pub native_token: C::NativeAddress,
+        /// Path to the TX WASM code file
+        pub tx_code_path: PathBuf,
     }
 
     impl CliToSdk<InitProposal<SdkTypes>> for InitProposal<CliTypes> {

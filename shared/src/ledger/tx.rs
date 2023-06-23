@@ -259,6 +259,15 @@ pub enum Error {
     /// Other Errors that may show up when using the interface
     #[error("{0}")]
     Other(String),
+    /// The redelegation amount is larger than the remaining bond amount
+    #[error(
+        "The redelegation amount is larger than the remaining bond amount. \
+         Amount to redelegate is {0} and the remaining bond amount is {1}."
+    )]
+    RedelegationAmountTooLarge(String, String),
+    /// The redelegation amount is 0
+    #[error("The amount requested to redelegate is 0 tokens")]
+    RedelegationIsZero,
 }
 
 /// Capture the result of running a transaction
@@ -807,6 +816,102 @@ pub async fn build_unjail_validator<
     )
     .await;
     Ok(tx)
+}
+
+/// Redelegate tokens from one validator to another
+pub async fn build_redelegation<
+    C: crate::ledger::queries::Client + Sync,
+    U: WalletUtils,
+>(
+    client: &C,
+    wallet: &mut Wallet<U>,
+    args: args::Redelegate,
+) -> Result<(Tx, Option<Address>, common::PublicKey), Error> {
+    let epoch = rpc::query_epoch(client).await;
+
+    let src_validator = known_validator_or_err(
+        args.src_validator.clone(),
+        args.tx.force,
+        client,
+    )
+    .await?;
+
+    let dest_validator = known_validator_or_err(
+        args.dest_validator.clone(),
+        args.tx.force,
+        client,
+    )
+    .await?;
+
+    let owner = args.owner.clone();
+    let redel_amount = args.amount;
+
+    if redel_amount == token::Amount::zero() {
+        eprintln!(
+            "The requested redelegation amount is 0. A positive amount must \
+             be requested."
+        );
+        if !args.tx.force {
+            return Err(Error::RedelegationIsZero);
+        }
+    }
+
+    let bond_amount =
+        rpc::query_bond(client, &owner, &src_validator, None).await;
+    if redel_amount > bond_amount {
+        eprintln!(
+            "There are not enough tokens available for the desired \
+             redelegation at the current epoch {}. Requested to redelegate {} \
+             tokens but only {} tokens are available.",
+            epoch,
+            redel_amount.to_string_native(),
+            bond_amount.to_string_native()
+        );
+        if !args.tx.force {
+            return Err(Error::RedelegationAmountTooLarge(
+                redel_amount.to_string_native(),
+                bond_amount.to_string_native(),
+            ));
+        }
+    } else {
+        println!(
+            "{} NAM tokens available for redelegation. Submitting \
+             redelegation transaction for {} tokens...",
+            bond_amount.to_string_native(),
+            redel_amount.to_string_native()
+        );
+    }
+
+    let tx_code_hash =
+        query_wasm_code_hash(client, args.tx_code_path.to_str().unwrap())
+            .await
+            .unwrap();
+
+    let data = pos::Redelegation {
+        src_validator,
+        dest_validator,
+        owner,
+        amount: redel_amount,
+    };
+    let data = data.try_to_vec().map_err(Error::EncodeTxFailure)?;
+
+    let mut tx = Tx::new(TxType::Raw);
+    tx.header.chain_id = args.tx.chain_id.clone().unwrap();
+    tx.header.expiration = args.tx.expiration;
+    tx.set_data(Data::new(data));
+    tx.set_code(Code::from_hash(tx_code_hash));
+
+    let default_signer = args.owner;
+    prepare_tx::<C, U>(
+        client,
+        wallet,
+        &args.tx,
+        tx,
+        TxSigningKey::WalletAddress(default_signer),
+        #[cfg(not(feature = "mainnet"))]
+        false,
+    )
+    .await
 }
 
 /// Submit transaction to withdraw an unbond

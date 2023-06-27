@@ -11,6 +11,7 @@ wasms += tx_ibc
 wasms += tx_init_account
 wasms += tx_init_proposal
 wasms += tx_init_validator
+wasms += tx_redelegate
 wasms += tx_reveal_pk
 wasms += tx_transfer
 wasms += tx_unbond

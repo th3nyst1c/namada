@@ -198,6 +198,13 @@ pub enum UnjailValidatorError {
     NotEligible(Address, Epoch, Epoch),
 }
 
+#[allow(missing_docs)]
+#[derive(Error, Debug)]
+pub enum RedelegationError {
+    #[error("The redelegation is chained")]
+    IsChainedRedelegation,
+}
+
 impl From<BecomeValidatorError> for storage_api::Error {
     fn from(err: BecomeValidatorError) -> Self {
         Self::new(err)
@@ -236,6 +243,12 @@ impl From<InflationError> for storage_api::Error {
 
 impl From<UnjailValidatorError> for storage_api::Error {
     fn from(err: UnjailValidatorError) -> Self {
+        Self::new(err)
+    }
+}
+
+impl From<RedelegationError> for storage_api::Error {
+    fn from(err: RedelegationError) -> Self {
         Self::new(err)
     }
 }
@@ -1603,14 +1616,13 @@ where
     }
 
     let unbonds = unbond_handle(source, validator);
-    // TODO: think if this should be +1 or not!!!
     let withdrawable_epoch = current_epoch + params.withdrawable_epoch_offset();
 
     let mut remaining = amount;
     let mut amount_after_slashing = token::Change::default();
 
     // Iterate thru bonds, find non-zero delta entries starting from
-    // future-most, then decrement those values. For every val that
+    // future-most, then decrement those values. For every value that
     // gets decremented down to 0, need a unique unbond object.
     // Read all matched bonds into memory to do reverse iteration
     #[allow(clippy::needless_collect)]
@@ -3592,4 +3604,38 @@ where
         }
     }
     Ok(slashes)
+}
+
+/// Redelegate bonded tokens from a source validator to a destination validator
+pub fn redelegate_tokens<S>(
+    storage: &mut S,
+    owner: &Address,
+    src_validator: &Address,
+    dest_validator: &Address,
+    current_epoch: Epoch,
+) -> storage_api::Result<()>
+where
+    S: StorageRead + StorageWrite,
+{
+    let params = read_pos_params(storage)?;
+
+    let redel_end_epoch =
+        validator_incoming_redelegations_handle(src_validator)
+            .get(storage, dest_validator)?;
+    let is_not_chained = if let Some(end_epoch) = redel_end_epoch {
+        // TODO: check bounds for correctness (> and presence of cubic offset)
+        end_epoch + params.unbonding_len > current_epoch
+    } else {
+        true
+    };
+
+    if !is_not_chained {
+        return Err(RedelegationError::IsChainedRedelegation.into());
+    }
+
+    // TODO: the unbond fn itself needs to be updated for redelegation
+    let amount = token::Amount::default(); // placeholder for now
+    unbond_tokens(storage, Some(owner), src_validator, amount, current_epoch)?;
+
+    Ok(())
 }

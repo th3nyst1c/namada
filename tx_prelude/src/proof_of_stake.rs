@@ -6,7 +6,8 @@ use namada_core::types::{key, token};
 pub use namada_proof_of_stake::parameters::PosParams;
 use namada_proof_of_stake::{
     become_validator, bond_tokens, change_validator_commission_rate,
-    read_pos_params, unbond_tokens, unjail_validator, withdraw_tokens,
+    read_pos_params, redelegate_tokens, unbond_tokens, unjail_validator,
+    withdraw_tokens,
 };
 pub use namada_proof_of_stake::{parameters, types};
 use rust_decimal::Decimal;
@@ -14,7 +15,7 @@ use rust_decimal::Decimal;
 use super::*;
 
 impl Ctx {
-    /// NEW: Self-bond tokens to a validator when `source` is `None` or equal to
+    /// Self-bond tokens to a validator when `source` is `None` or equal to
     /// the `validator` address, or delegate tokens from the `source` to the
     /// `validator`.
     pub fn bond_tokens(
@@ -27,7 +28,7 @@ impl Ctx {
         bond_tokens(self, source, validator, amount, current_epoch)
     }
 
-    /// NEW: Unbond self-bonded tokens from a validator when `source` is `None`
+    /// Unbond self-bonded tokens from a validator when `source` is `None`
     /// or equal to the `validator` address, or unbond delegated tokens from
     /// the `source` to the `validator`.
     pub fn unbond_tokens(
@@ -40,7 +41,7 @@ impl Ctx {
         unbond_tokens(self, source, validator, amount, current_epoch)
     }
 
-    /// NEW: Withdraw unbonded tokens from a self-bond to a validator when
+    /// Withdraw unbonded tokens from a self-bond to a validator when
     /// `source` is `None` or equal to the `validator` address, or withdraw
     /// unbonded tokens delegated to the `validator` to the `source`.
     pub fn withdraw_tokens(
@@ -52,7 +53,7 @@ impl Ctx {
         withdraw_tokens(self, source, validator, current_epoch)
     }
 
-    /// NEW: Change validator commission rate.
+    /// Change validator commission rate.
     pub fn change_validator_commission_rate(
         &mut self,
         validator: &Address,
@@ -68,7 +69,24 @@ impl Ctx {
         unjail_validator(self, validator, current_epoch)
     }
 
-    /// NEW: Attempt to initialize a validator account. On success, returns the
+    /// Redelegate bonded tokens from one validator to another one.
+    pub fn redelegate_tokens(
+        &mut self,
+        owner: &Address,
+        src_validator: &Address,
+        dest_validator: &Address,
+    ) -> TxResult {
+        let current_epoch = self.get_block_epoch()?;
+        redelegate_tokens(
+            self,
+            owner,
+            src_validator,
+            dest_validator,
+            current_epoch,
+        )
+    }
+
+    /// Attempt to initialize a validator account. On success, returns the
     /// initialized validator account's address.
     pub fn init_validator(
         &mut self,

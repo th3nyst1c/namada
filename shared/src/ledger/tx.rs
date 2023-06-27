@@ -748,12 +748,28 @@ pub async fn submit_redelegation<
 
     let owner = args.owner.clone();
 
+    let bond_amount =
+        rpc::query_bond(client, &owner, &src_validator, None).await;
+    if bond_amount.is_zero() {
+        eprintln!(
+            "There are no bonded tokens available for redelegation the \
+             current epoch {}.",
+            epoch
+        );
+        if !args.tx.force {
+            return Err(Error::NoBondFound);
+        }
+    } else {
+        println!(
+            "{bond_amount} NAM tokens available for redelegation. Submitting \
+             redelegation transaction..."
+        );
+    }
+
     let tx_code_hash =
         query_wasm_code_hash(client, args.tx_code_path.to_str().unwrap())
             .await
             .unwrap();
-
-    // TODO: Anything we want to check first?
 
     let data = pos::Redelegation {
         src_validator,

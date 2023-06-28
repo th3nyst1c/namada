@@ -38,7 +38,7 @@ impl Ctx {
         amount: token::Amount,
     ) -> TxResult {
         let current_epoch = self.get_block_epoch()?;
-        unbond_tokens(self, source, validator, amount, current_epoch)
+        unbond_tokens(self, source, validator, amount, current_epoch, false)
     }
 
     /// Withdraw unbonded tokens from a self-bond to a validator when

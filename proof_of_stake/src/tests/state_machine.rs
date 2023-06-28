@@ -330,6 +330,7 @@ impl StateMachineTest for ConcretePosState {
                     &id.validator,
                     amount,
                     current_epoch,
+                    false,
                 )
                 .unwrap();
 

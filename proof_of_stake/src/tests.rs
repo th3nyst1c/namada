@@ -501,6 +501,7 @@ fn test_bonds_aux(params: PosParams, validators: Vec<GenesisValidator>) {
         &validator.address,
         amount_self_unbond,
         current_epoch,
+        false,
     )
     .unwrap();
 
@@ -635,6 +636,7 @@ fn test_bonds_aux(params: PosParams, validators: Vec<GenesisValidator>) {
         &validator.address,
         amount_undel,
         current_epoch,
+        false,
     )
     .unwrap();
 
@@ -876,7 +878,8 @@ fn test_become_validator_aux(
     current_epoch = advance_epoch(&mut s, &params);
 
     // Unbond the self-bond
-    unbond_tokens(&mut s, None, &new_validator, amount, current_epoch).unwrap();
+    unbond_tokens(&mut s, None, &new_validator, amount, current_epoch, false)
+        .unwrap();
 
     let withdrawable_offset = params.unbonding_len + params.pipeline_len;
 
@@ -961,7 +964,8 @@ fn test_slashes_with_unbonding_aux(
     let unbond_amount = decimal_mult_amount(dec!(0.5), val_tokens);
     println!("Going to unbond {unbond_amount}");
     let unbond_epoch = current_epoch;
-    unbond_tokens(&mut s, None, val_addr, unbond_amount, unbond_epoch).unwrap();
+    unbond_tokens(&mut s, None, val_addr, unbond_amount, unbond_epoch, false)
+        .unwrap();
 
     // Discover second slash
     let slash_1_evidence_epoch = current_epoch;

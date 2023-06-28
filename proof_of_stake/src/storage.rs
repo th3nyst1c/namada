@@ -42,6 +42,8 @@ const CONSENSUS_VALIDATOR_SET_ACCUMULATOR_STORAGE_KEY: &str =
     "validator_rewards_accumulator";
 const VALIDATOR_INCOMING_REDELEGATIONS_KEY: &str = "incoming_redelegations";
 const VALIDATOR_OUTGOING_REDELEGATIONS_KEY: &str = "outgoing_redelegations";
+const DELEGATOR_REDELEGATED_BONDS_KEY: &str = "delegator_redelegated_bonds";
+const DELEGATOR_REDELEGATED_UNBONDS_KEY: &str = "delegator_redelegated_unbonds";
 
 /// Is the given key a PoS storage key?
 pub fn is_pos_key(key: &Key) -> bool {
@@ -219,6 +221,20 @@ pub fn validator_incoming_redelegations_key(validator: &Address) -> Key {
 pub fn validator_outgoing_redelegations_key(validator: &Address) -> Key {
     validator_prefix(validator)
         .push(&VALIDATOR_OUTGOING_REDELEGATIONS_KEY.to_owned())
+        .expect("Cannot obtain a storage key")
+}
+
+/// Storage key prefix for all delegators' redelegated bonds.
+pub fn delegator_redelegated_bonds_prefix() -> Key {
+    Key::from(ADDRESS.to_db_key())
+        .push(&DELEGATOR_REDELEGATED_BONDS_KEY.to_owned())
+        .expect("Cannot obtain a storage key")
+}
+
+/// Storage key for a particular delegator's redelegated bond information.
+pub fn delegator_redelegated_bonds_key(delegator: &Address) -> Key {
+    delegator_redelegated_bonds_prefix()
+        .push(&delegator.to_db_key())
         .expect("Cannot obtain a storage key")
 }
 

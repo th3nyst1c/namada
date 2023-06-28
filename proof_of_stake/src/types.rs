@@ -177,6 +177,28 @@ pub type IncomingRedelegations = LazyMap<Address, Epoch>;
 pub type OutgoingRedelegations =
     NestedMap<Address, NestedMap<Epoch, LazyMap<Epoch, token::Amount>>>;
 
+/// A validator's total redelegated unbonded tokens
+/// TODO: understand better, better description
+pub type TotalRedelegatedUnbonded = NestedMap<
+    Epoch,
+    NestedMap<Epoch, NestedMap<Address, LazyMap<Epoch, token::Amount>>>,
+>;
+
+/// Map of redelegated bonds
+/// TODO: better description
+/// TODO: should this be epoched?
+pub type RedelegatedBonds = NestedMap<Address, LazyMap<Epoch, token::Amount>>;
+
+/// A delegator's redelegated bonded token amount
+/// TODO: better understanding and description
+pub type DelegatorRedelegatedBonded =
+    NestedMap<Address, NestedMap<Epoch, RedelegatedBonds>>;
+
+/// A delegator's redelegated unbonded token amount
+/// TODO: better understanding and description
+pub type DelegatorRedelegatedUnbonded =
+    NestedMap<Address, NestedMap<Epoch, NestedMap<Epoch, RedelegatedBonds>>>;
+
 #[derive(
     Debug, Clone, BorshSerialize, BorshDeserialize, Eq, Hash, PartialEq,
 )]

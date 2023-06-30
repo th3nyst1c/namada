@@ -3,6 +3,7 @@
 mod state_machine;
 
 use std::cmp::min;
+use std::collections::HashSet;
 use std::ops::Range;
 
 use namada_core::ledger::storage::testing::TestWlStorage;
@@ -10,7 +11,8 @@ use namada_core::ledger::storage_api::collections::lazy_map;
 use namada_core::ledger::storage_api::token::{credit_tokens, read_balance};
 use namada_core::ledger::storage_api::StorageRead;
 use namada_core::types::address::testing::{
-    address_from_simple_seed, arb_established_address,
+    address_from_simple_seed, arb_established_address, established_address_1,
+    established_address_2,
 };
 use namada_core::types::address::{Address, EstablishedAddressGen};
 use namada_core::types::key::common::{PublicKey, SecretKey};
@@ -38,8 +40,8 @@ use crate::types::{
 use crate::{
     become_validator, below_capacity_validator_set_handle, bond_handle,
     bond_tokens, bonds_and_unbonds, consensus_validator_set_handle,
-    copy_validator_sets_and_positions, find_validator_by_raw_hash,
-    get_num_consensus_validators, init_genesis,
+    copy_validator_sets_and_positions, find_bonds_to_remove,
+    find_validator_by_raw_hash, get_num_consensus_validators, init_genesis,
     insert_validator_into_validator_set, is_validator, process_slashes,
     read_below_capacity_validator_set_addresses_with_stake,
     read_consensus_validator_set_addresses_with_stake, read_total_stake,
@@ -1960,4 +1962,58 @@ fn arb_genesis_validators(
             })
             .collect()
     })
+}
+
+#[test]
+fn test_find_bonds_to_remove() {
+    let mut storage = TestWlStorage::default();
+    let source = established_address_1();
+    let validator = established_address_2();
+    let bond_handle = bond_handle(&source, &validator);
+
+    let (e1, e2, e6) = (Epoch(1), Epoch(2), Epoch(6));
+
+    bond_handle.set(&mut storage, 5, e1, 0).unwrap();
+    bond_handle.set(&mut storage, 3, e2, 0).unwrap();
+    bond_handle.set(&mut storage, 8, e6, 0).unwrap();
+
+    // Test 1
+    let bonds_for_removal =
+        find_bonds_to_remove(&storage, &bond_handle.get_data_handler(), 8)
+            .unwrap();
+    assert_eq!(
+        bonds_for_removal.epochs,
+        vec![e6].into_iter().collect::<HashSet<Epoch>>()
+    );
+    assert!(bonds_for_removal.new_entry.is_none());
+
+    // Test 2
+    let bonds_for_removal =
+        find_bonds_to_remove(&storage, &bond_handle.get_data_handler(), 10)
+            .unwrap();
+    assert_eq!(
+        bonds_for_removal.epochs,
+        vec![e6].into_iter().collect::<HashSet<Epoch>>()
+    );
+    assert_eq!(bonds_for_removal.new_entry, Some((Epoch(2), 1)));
+
+    // Test 3
+    let bonds_for_removal =
+        find_bonds_to_remove(&storage, &bond_handle.get_data_handler(), 11)
+            .unwrap();
+    assert_eq!(
+        bonds_for_removal.epochs,
+        vec![e6, e2].into_iter().collect::<HashSet<Epoch>>()
+    );
+    assert!(bonds_for_removal.new_entry.is_none());
+
+    // Test 4
+    let bonds_for_removal =
+        find_bonds_to_remove(&storage, &bond_handle.get_data_handler(), 12)
+            .unwrap();
+    assert_eq!(
+        bonds_for_removal.epochs,
+        vec![e6, e2].into_iter().collect::<HashSet<Epoch>>()
+    );
+    assert_eq!(bonds_for_removal.new_entry, Some((Epoch(1), 4)));
 }

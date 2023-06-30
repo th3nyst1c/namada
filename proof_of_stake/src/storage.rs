@@ -238,6 +238,20 @@ pub fn delegator_redelegated_bonds_key(delegator: &Address) -> Key {
         .expect("Cannot obtain a storage key")
 }
 
+/// Storage key prefix for all delegators' redelegated unbonds.
+pub fn delegator_redelegated_unbonds_prefix() -> Key {
+    Key::from(ADDRESS.to_db_key())
+        .push(&DELEGATOR_REDELEGATED_UNBONDS_KEY.to_owned())
+        .expect("Cannot obtain a storage key")
+}
+
+/// Storage key for a particular delegator's redelegated unbond information.
+pub fn delegator_redelegated_unbonds_key(delegator: &Address) -> Key {
+    delegator_redelegated_bonds_prefix()
+        .push(&delegator.to_db_key())
+        .expect("Cannot obtain a storage key")
+}
+
 /// Is storage key for validator's delegation rewards products?
 pub fn is_validator_delegation_rewards_product_key(
     key: &Key,

@@ -747,13 +747,14 @@ pub async fn submit_redelegation<
     .await?;
 
     let owner = args.owner.clone();
+    let redel_amount = args.amount.clone();
 
     let bond_amount =
         rpc::query_bond(client, &owner, &src_validator, None).await;
-    if bond_amount.is_zero() {
+    if redel_amount > bond_amount {
         eprintln!(
-            "There are no bonded tokens available for redelegation the \
-             current epoch {}.",
+            "There are not enough tokens available for the desired \
+             redelegation at the current epoch {}.",
             epoch
         );
         if !args.tx.force {
@@ -762,7 +763,7 @@ pub async fn submit_redelegation<
     } else {
         println!(
             "{bond_amount} NAM tokens available for redelegation. Submitting \
-             redelegation transaction..."
+             redelegation transaction for {redel_amount} tokens..."
         );
     }
 
@@ -775,6 +776,7 @@ pub async fn submit_redelegation<
         src_validator,
         dest_validator,
         owner,
+        amount: redel_amount,
     };
     let data = data.try_to_vec().map_err(Error::EncodeTxFailure)?;
 

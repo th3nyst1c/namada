@@ -230,6 +230,8 @@ pub struct Redelegate<C: NamadaTypes = SdkTypes> {
     pub dest_validator: C::Address,
     /// Owner of the bonds that are being redelegated
     pub owner: C::Address,
+    /// The amount of tokens to redelegate
+    pub amount: token::Amount,
     /// Path to the TX WASM code file
     pub tx_code_path: PathBuf,
 }

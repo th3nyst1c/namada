@@ -2559,6 +2559,7 @@ pub mod args {
                 src_validator: ctx.get(&self.src_validator),
                 dest_validator: ctx.get(&self.src_validator),
                 owner: ctx.get(&self.owner),
+                amount: self.amount,
                 tx_code_path: self.tx_code_path.to_path_buf(),
             }
         }
@@ -2570,12 +2571,14 @@ pub mod args {
             let src_validator = SOURCE_VALIDATOR.parse(matches);
             let dest_validator = DESTINATION_VALIDATOR.parse(matches);
             let owner = OWNER.parse(matches);
+            let amount = AMOUNT.parse(matches);
             let tx_code_path = PathBuf::from(TX_UNBOND_WASM);
             Self {
                 tx,
                 src_validator,
                 dest_validator,
                 owner,
+                amount,
                 tx_code_path,
             }
         }

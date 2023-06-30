@@ -75,6 +75,7 @@ impl Ctx {
         owner: &Address,
         src_validator: &Address,
         dest_validator: &Address,
+        amount: token::Amount,
     ) -> TxResult {
         let current_epoch = self.get_block_epoch()?;
         redelegate_tokens(
@@ -83,6 +84,7 @@ impl Ctx {
             src_validator,
             dest_validator,
             current_epoch,
+            amount,
         )
     }
 

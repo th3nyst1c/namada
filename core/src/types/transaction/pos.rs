@@ -75,6 +75,8 @@ pub struct Redelegation {
     pub dest_validator: Address,
     /// Owner (delegator) of the bonds to be redelegate
     pub owner: Address,
+    /// The amount of tokens
+    pub amount: token::Amount,
 }
 
 /// A change to the validator commission rate.

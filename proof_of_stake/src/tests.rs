@@ -3,7 +3,7 @@
 mod state_machine;
 
 use std::cmp::min;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use namada_core::ledger::storage::testing::TestWlStorage;
@@ -12,7 +12,7 @@ use namada_core::ledger::storage_api::token::{credit_tokens, read_balance};
 use namada_core::ledger::storage_api::StorageRead;
 use namada_core::types::address::testing::{
     address_from_simple_seed, arb_established_address, established_address_1,
-    established_address_2,
+    established_address_2, established_address_3,
 };
 use namada_core::types::address::{Address, EstablishedAddressGen};
 use namada_core::types::key::common::{PublicKey, SecretKey};
@@ -33,16 +33,17 @@ use crate::parameters::testing::arb_pos_params;
 use crate::parameters::PosParams;
 use crate::types::{
     decimal_mult_amount, into_tm_voting_power, BondDetails, BondId,
-    BondsAndUnbondsDetails, ConsensusValidator, GenesisValidator, Position,
-    ReverseOrdTokenAmount, SlashType, UnbondDetails, ValidatorSetUpdate,
-    ValidatorState, WeightedValidator,
+    BondsAndUnbondsDetails, ConsensusValidator, GenesisValidator, Position, RedelegatedBondsMap, ReverseOrdTokenAmount, SlashType,
+    UnbondDetails, ValidatorSetUpdate, ValidatorState, WeightedValidator,
 };
 use crate::{
     become_validator, below_capacity_validator_set_handle, bond_handle,
-    bond_tokens, bonds_and_unbonds, consensus_validator_set_handle,
-    copy_validator_sets_and_positions, find_bonds_to_remove,
+    bond_tokens, bonds_and_unbonds, compute_modified_redelegation,
+    consensus_validator_set_handle, copy_validator_sets_and_positions,
+    delegator_redelegated_bonds_handle, find_bonds_to_remove,
     find_validator_by_raw_hash, get_num_consensus_validators, init_genesis,
-    insert_validator_into_validator_set, is_validator, process_slashes,
+    insert_validator_into_validator_set, is_validator,
+    merge_redelegated_bonds_map, process_slashes,
     read_below_capacity_validator_set_addresses_with_stake,
     read_consensus_validator_set_addresses_with_stake, read_total_stake,
     read_validator_delta_value, read_validator_stake, slash,
@@ -50,7 +51,7 @@ use crate::{
     unjail_validator, update_validator_deltas, update_validator_set,
     validator_consensus_key_handle, validator_set_update_tendermint,
     validator_slashes_handle, validator_state_handle, withdraw_tokens,
-    write_validator_address_raw_hash,
+    write_validator_address_raw_hash, ModifiedRedelegation,
 };
 
 proptest! {
@@ -2016,4 +2017,149 @@ fn test_find_bonds_to_remove() {
         vec![e6, e2].into_iter().collect::<HashSet<Epoch>>()
     );
     assert_eq!(bonds_for_removal.new_entry, Some((Epoch(1), 4)));
+}
+
+#[test]
+fn test_compute_modified_redelegation() {
+    let mut storage = TestWlStorage::default();
+    let validator1 = established_address_1();
+    let validator2 = established_address_2();
+    let owner = established_address_3();
+    let outer_epoch = Epoch(0);
+
+    // Fill redelegated bonds in storage
+    let redelegated_bonds_map = delegator_redelegated_bonds_handle(&owner)
+        .at(&validator1)
+        .at(&outer_epoch);
+    redelegated_bonds_map
+        .at(&validator1)
+        .insert(&mut storage, Epoch(2), 6)
+        .unwrap();
+    redelegated_bonds_map
+        .at(&validator1)
+        .insert(&mut storage, Epoch(4), 7)
+        .unwrap();
+    redelegated_bonds_map
+        .at(&validator2)
+        .insert(&mut storage, Epoch(1), 5)
+        .unwrap();
+    redelegated_bonds_map
+        .at(&validator2)
+        .insert(&mut storage, Epoch(4), 7)
+        .unwrap();
+
+    let mr1 = compute_modified_redelegation(
+        &storage,
+        &redelegated_bonds_map,
+        Epoch(5),
+        25,
+    )
+    .unwrap();
+    let mr2 = compute_modified_redelegation(
+        &storage,
+        &redelegated_bonds_map,
+        Epoch(5),
+        30,
+    )
+    .unwrap();
+
+    let exp_mr = ModifiedRedelegation::default();
+
+    assert_eq!(mr1, exp_mr);
+    assert_eq!(mr2, exp_mr);
+
+    // TODO: more tests once deterministic validator ordering is implemented and
+    // synced between Rust and Quint
+}
+
+#[test]
+fn test_merge_redelegated_bonds_map() {
+    let alice_address = established_address_1();
+    let bob_address = established_address_2();
+    let tom_address = established_address_3();
+
+    let ep1 = Epoch(1);
+    let ep2 = Epoch(2);
+    let ep4 = Epoch(4);
+    let ep5 = Epoch(5);
+    let ep7 = Epoch(7);
+
+    let alice_map = vec![(ep1, 2), (ep2, 3)]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    let bob_map = vec![(ep1, 2), (ep2, 3)]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    let tom_map = vec![(ep4, 3), (ep5, 6)]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    let tom_map_2 = vec![(ep4, 3), (ep7, 6)]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    let comb_tom_map = vec![(ep4, 6), (ep5, 6), (ep7, 6)]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+    let alice_bob_map = vec![
+        (alice_address.clone(), alice_map.clone()),
+        (bob_address.clone(), bob_map.clone()),
+    ]
+    .into_iter()
+    .collect::<HashMap<_, _>>();
+    let bob_tom_map = vec![
+        (tom_address.clone(), tom_map),
+        (bob_address.clone(), bob_map.clone()),
+    ]
+    .into_iter()
+    .collect::<HashMap<_, _>>();
+    let alice_tom2_map = vec![
+        (tom_address.clone(), tom_map_2),
+        (alice_address.clone(), alice_map.clone()),
+    ]
+    .into_iter()
+    .collect::<HashMap<_, _>>();
+    let everyone = vec![
+        (alice_address.clone(), alice_map.clone()),
+        (bob_address.clone(), bob_map.clone()),
+        (tom_address, comb_tom_map),
+    ]
+    .into_iter()
+    .collect::<HashMap<_, _>>();
+
+    assert_eq!(
+        merge_redelegated_bonds_map(
+            &RedelegatedBondsMap::default(),
+            &RedelegatedBondsMap::default()
+        ),
+        RedelegatedBondsMap::default()
+    );
+    assert_eq!(
+        merge_redelegated_bonds_map(
+            &alice_bob_map,
+            &RedelegatedBondsMap::default()
+        ),
+        alice_bob_map
+    );
+    assert_eq!(
+        merge_redelegated_bonds_map(
+            &RedelegatedBondsMap::default(),
+            &alice_bob_map
+        ),
+        alice_bob_map
+    );
+    assert_eq!(
+        merge_redelegated_bonds_map(
+            &vec![(alice_address, alice_map)]
+                .into_iter()
+                .collect::<HashMap<_, _>>(),
+            &vec![(bob_address, bob_map)]
+                .into_iter()
+                .collect::<HashMap<_, _>>(),
+        ),
+        alice_bob_map
+    );
+    assert_eq!(
+        merge_redelegated_bonds_map(&bob_tom_map, &alice_tom2_map),
+        everyone
+    )
 }

@@ -747,7 +747,7 @@ pub async fn submit_redelegation<
     .await?;
 
     let owner = args.owner.clone();
-    let redel_amount = args.amount.clone();
+    let redel_amount = args.amount;
 
     let bond_amount =
         rpc::query_bond(client, &owner, &src_validator, None).await;

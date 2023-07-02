@@ -189,6 +189,9 @@ pub type TotalRedelegatedUnbonded = NestedMap<
 /// TODO: should this be epoched?
 pub type RedelegatedBonds = NestedMap<Address, LazyMap<Epoch, token::Change>>;
 
+/// In-memory map of redelegated bonds
+pub type RedelegatedBondsMap = HashMap<Address, HashMap<Epoch, token::Change>>;
+
 /// A delegator's redelegated bonded token amount
 /// TODO: better understanding and description
 pub type DelegatorRedelegatedBonded =

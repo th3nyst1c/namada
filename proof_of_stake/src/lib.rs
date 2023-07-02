@@ -67,10 +67,11 @@ use types::{
     decimal_mult_i128, BelowCapacityValidatorSet, BelowCapacityValidatorSets,
     BondId, Bonds, CommissionRates, ConsensusValidator, ConsensusValidatorSet,
     ConsensusValidatorSets, EpochedSlashes, GenesisValidator, Position,
-    RedelegatedBonds, RewardsProducts, Slash, SlashType, Slashes, TotalDeltas,
-    Unbonds, ValidatorAddresses, ValidatorConsensusKeys, ValidatorDeltas,
-    ValidatorPositionAddresses, ValidatorSetPositions, ValidatorSetUpdate,
-    ValidatorState, ValidatorStates, VoteInfo, WeightedValidator,
+    RedelegatedBonds, RedelegatedBondsMap, RewardsProducts, Slash, SlashType,
+    Slashes, TotalDeltas, Unbonds, ValidatorAddresses, ValidatorConsensusKeys,
+    ValidatorDeltas, ValidatorPositionAddresses, ValidatorSetPositions,
+    ValidatorSetUpdate, ValidatorState, ValidatorStates, VoteInfo,
+    WeightedValidator,
 };
 
 /// Address of the PoS account implemented as a native VP
@@ -1874,21 +1875,18 @@ where
     };
 
     // `updatedRedelegatedBonded`
-    // TODO: requires some logic we don't have implemented yet (hence commented)
     if let Some(epoch) = modified_redelegation.epoch {
         // First remove redelegation entries corresponding the outer epoch key
-        for _epochs in &bonds_to_unbond.epochs {
-            // TODO: Tomas is implementing the iterative removal here
-            // redelegated_bonds.remove(&storage)
+        for epoch_to_remove in &bonds_to_unbond.epochs {
+            redelegated_bonds.remove_all(storage, epoch_to_remove)?;
         }
         // Then updated the redelegated bonds at this epoch
         let rbonds = redelegated_bonds.at(&epoch);
         update_redelegated_bonds(storage, &rbonds, &modified_redelegation)?;
     } else {
         // Need to remove redelegation entries corresponding the outer epoch key
-        for _epochs in &bonds_to_unbond.epochs {
-            // TODO: Tomas is implementing the iterative removal here
-            // redelegated_bonds.remove(&storage)
+        for epoch_to_remove in &bonds_to_unbond.epochs {
+            redelegated_bonds.remove_all(storage, epoch_to_remove)?;
         }
     }
 
@@ -2010,7 +2008,7 @@ where
     Ok(bonds_for_removal)
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct ModifiedRedelegation {
     epoch: Option<Epoch>,
     validators_to_remove: HashSet<Address>,
@@ -2295,7 +2293,92 @@ where
         .cloned()
         .collect::<HashSet<_>>();
 
+    let updated_redelegated_unbonded = all_epoch_pairs
+        .into_iter()
+        .map(|pair| {
+            let in_existing = existing_epoch_pairs.contains(&pair);
+            let in_new = new_epoch_pairs.contains(&pair);
+            let (start, withdraw) = pair;
+
+            let mut existing: RedelegatedBondsMap = Default::default();
+            for item in redelegated_unbonded
+                .at(&start)
+                .at(&withdraw)
+                .iter(storage)
+                .unwrap()
+            {
+                let (
+                    NestedSubKey::Data {
+                        key: validator,
+                        nested_sub_key: SubKey::Data(epoch),
+                    },
+                    amount,
+                ) = item.unwrap();
+                existing
+                    .entry(validator.clone())
+                    .or_default()
+                    .insert(epoch, amount);
+            }
+
+            if in_existing && in_new {
+                let merged = merge_redelegated_bonds_map(
+                    &existing,
+                    new_redelegated_unbonds.get(&start).unwrap(),
+                );
+                (pair, merged)
+            } else if in_existing {
+                (pair, existing)
+            } else {
+                (pair, new_redelegated_unbonds.get(&start).unwrap().clone())
+            }
+        })
+        .collect::<HashMap<_, _>>();
+
     Ok(())
+}
+
+fn merge_redelegated_bonds_map(
+    map1: &RedelegatedBondsMap,
+    map2: &RedelegatedBondsMap,
+) -> RedelegatedBondsMap {
+    let all_keys = map1
+        .keys()
+        .chain(map2.keys())
+        .cloned()
+        .collect::<HashSet<_>>();
+    all_keys
+        .into_iter()
+        .map(|address| {
+            let bonds1 = map1.get(&address).cloned();
+            let bonds2 = map2.get(&address).cloned();
+            if let (Some(bonds1), Some(bonds2)) =
+                (bonds1.clone(), bonds2.clone())
+            {
+                let total_bonds = bonds1
+                    .keys()
+                    .chain(bonds2.keys())
+                    .cloned()
+                    .map(|epoch| {
+                        let val1 =
+                            bonds1.get(&epoch).cloned().unwrap_or_default();
+                        let val2 =
+                            bonds2.get(&epoch).cloned().unwrap_or_default();
+                        (epoch, val1 + val2)
+                    })
+                    .collect::<HashMap<_, _>>();
+                (address, total_bonds)
+            } else if let Some(bonds1) = bonds1 {
+                (address, bonds1)
+            } else if let Some(bonds2) = bonds2 {
+                (address, bonds2)
+            } else {
+                panic!(
+                    "Should never be passing two empty maps into \
+                     `merge_redelegated_bonds_map`"
+                );
+            }
+        })
+        .collect()
 }
 
 /// Compute a token amount after slashing, given the initial amount and a set of

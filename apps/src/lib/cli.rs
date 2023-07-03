@@ -2597,6 +2597,7 @@ pub mod args {
                     "Delegator (owner) address of the bonds that are being \
                      redelegated.",
                 ))
+                .arg(AMOUNT.def().about("Amount of tokens to redelegate."))
         }
     }
 

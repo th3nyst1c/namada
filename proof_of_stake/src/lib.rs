@@ -1930,6 +1930,7 @@ where
     // It seems that if this unbond is not a redelegation, then we update the
     // unbonds in storage with the `new_unbonds_map`. If it is a redelegation,
     // then we don't do anything with this new map in storage.
+    // Yeah, we don't record unbonds for redelegations
     if !is_redelegation {
         for ((start_epoch, withdraw_epoch), unbond_amount) in
             new_unbonds_map.into_iter()
@@ -1950,18 +1951,102 @@ where
     // NEW REDELEGATED UNBONDS
     // NOTE: I think we only need to update the redelegated unbonds if this is
     // NOT a redelegation
+    // We should do this regardless - the `is_redelegation` is to determine if
+    // the current call is from redelegation, but there might be redelegation
+    // already that's being unbonded or re-redelegated which is being updated
+    // here.
+    let delegator_redelegated_unbonded =
+        delegator_redelegated_unbonds_handle(source).at(validator);
+    // `newRedelegatedUnbonds`
+    let new_redelegated_unbonds = compute_new_redelegated_unbonds(
+        storage,
+        &redelegated_bonds,
+        &bonds_to_unbond.epochs,
+        &modified_redelegation,
+        &delegator_redelegated_unbonded,
+        withdrawable_epoch,
+    )?;
+
     if !is_redelegation {
-        let delegator_redelegated_unbonded =
-            delegator_redelegated_unbonds_handle(source).at(validator);
-        compute_new_redelegated_unbonds(
-            storage,
-            &redelegated_bonds,
-            &bonds_to_unbond.epochs,
-            &modified_redelegation,
-            &delegator_redelegated_unbonded,
-            withdrawable_epoch,
-        )?;
+        // Quint `def updateRedelegatedUnbonded` - not called when `if
+        // is_redelegation`
+        let new_epoch_pairs = new_redelegated_unbonds
+            .keys()
+            .map(|epoch| (*epoch, withdrawable_epoch))
+            .collect::<HashSet<_>>();
+
+        let existing_epoch_pairs = delegator_redelegated_unbonded
+            .iter(storage)?
+            .map(|res| {
+                let (
+                    NestedSubKey::Data {
+                        key: start_epoch,
+                        nested_sub_key:
+                            NestedSubKey::Data {
+                                key: withdraw_epoch,
+                                nested_sub_key: _,
+                            },
+                    },
+                    _,
+                ) = res.unwrap();
+                (start_epoch, withdraw_epoch)
+            })
+            .collect::<HashSet<_>>();
+
+        let all_epoch_pairs = new_epoch_pairs
+            .union(&existing_epoch_pairs)
+            .cloned()
+            .collect::<HashSet<_>>();
+        // Quint `val updatedRedelegatedUnbonded`
+        let updated_redelegated_unbonded: EagerRedelegatedUnbonds =
+            all_epoch_pairs
+                .into_iter()
+                .map(|pair| {
+                    let in_existing = existing_epoch_pairs.contains(&pair);
+                    let in_new = new_epoch_pairs.contains(&pair);
+                    let (start, withdraw) = pair;
+
+                    let mut existing: RedelegatedBondsMap = Default::default();
+                    for item in delegator_redelegated_unbonded
+                        .at(&start)
+                        .at(&withdraw)
+                        .iter(storage)
+                        .unwrap()
+                    {
+                        let (
+                            NestedSubKey::Data {
+                                key: validator,
+                                nested_sub_key: SubKey::Data(epoch),
+                            },
+                            amount,
+                        ) = item.unwrap();
+                        existing
+                            .entry(validator.clone())
+                            .or_default()
+                            .insert(epoch, amount);
+                    }
+
+                    if in_existing && in_new {
+                        let merged = merge_redelegated_bonds_map(
+                            &existing,
+                            new_redelegated_unbonds.get(&start).unwrap(),
+                        );
+                        (pair, merged)
+                    } else if in_existing {
+                        (pair, existing)
+                    } else {
+                        (
+                            pair,
+                            new_redelegated_unbonds
+                                .get(&start)
+                                .unwrap()
+                                .clone(),
+                        )
+                    }
+                })
+                .collect::<HashMap<_, _>>();
     }
+    // TODO `val updatedDelegator`
 
     Ok(())
 }
@@ -2144,6 +2229,22 @@ where
     Ok(())
 }
 
+/// Temp helper type to match quint model
+/// TODO: refactor out
+type EagerRedelegatedUnbonds = HashMap<
+    // redelegation end epoch
+    Epoch,
+    HashMap<
+        // source validator
+        Address,
+        HashMap<
+            // bond start epoch
+            Epoch,
+            token::Change,
+        >,
+    >,
+>;
+
 /// `computeNewRedelegatedUnbonds` from Quint
 /// Check assumptions in the Quint spec namada-redelegation.qnt
 /// TODO: try to optimize this by only writing to storage via Lazy!
@@ -2154,7 +2255,7 @@ fn compute_new_redelegated_unbonds<S>(
     modified_redelegation: &ModifiedRedelegation,
     redelegated_unbonded: &NestedMap<Epoch, NestedMap<Epoch, RedelegatedBonds>>,
     withdraw_epoch: Epoch,
-) -> storage_api::Result<()>
+) -> storage_api::Result<EagerRedelegatedUnbonds>
 where
     S: StorageRead + StorageWrite,
 {
@@ -2174,14 +2275,21 @@ where
             .collect::<HashSet<Epoch>>()
     };
 
+    // quint `newRedelegatedUnbonds` returned from
+    // `computeNewRedelegatedUnbonds`
     let new_redelegated_unbonds: HashMap<
         Epoch,
         HashMap<Address, HashMap<Epoch, token::Change>>,
     > = unbonded_epochs
         .into_iter()
         .map(|start| {
-            // TODO: is it ok to unwrap here?
-            if start != modified_redelegation.epoch.unwrap() {
+            // TODO: is it ok to unwrap here? No, it would panic when it's None,
+            // but it should go to the other branch
+            if modified_redelegation
+                .epoch
+                .map(|redelegation_epoch| start != redelegation_epoch)
+                .unwrap_or(false)
+            {
                 let mut rbonds: HashMap<
                     Address,
                     HashMap<Epoch, token::Change>,
@@ -2208,11 +2316,11 @@ where
                 > = HashMap::new();
                 for src_validator in &modified_redelegation.validators_to_remove
                 {
-                    if src_validator.clone()
-                        != modified_redelegation
-                            .validator_to_modify
-                            .clone()
-                            .unwrap()
+                    if modified_redelegation
+                        .validator_to_modify
+                        .as_ref()
+                        .map(|validator| src_validator != validator)
+                        .unwrap_or(false)
                     {
                         let raw_bonds =
                             redelegated_bonds.at(&start).at(src_validator);
@@ -2236,10 +2344,11 @@ where
                             let raw_bonds = rbonds
                                 .entry(src_validator.clone())
                                 .or_default();
-                            if *bond_start
-                                != modified_redelegation
-                                    .epoch_to_modify
-                                    .unwrap()
+                            if modified_redelegation
+                                .epoch_to_modify
+                                .as_ref()
+                                .map(|epoch| bond_start != epoch)
+                                .unwrap_or(false)
                             {
                                 raw_bonds
                                     .insert(*bond_start, cur_redel_bond_amount);
@@ -2249,6 +2358,8 @@ where
                                     cur_redel_bond_amount
                                         - modified_redelegation
                                             .new_amount
+                                            // Safe unwrap - it shouldn't get to
+                                            // this if it's None
                                             .unwrap(),
                                 );
                             }
@@ -2260,81 +2371,7 @@ where
         })
         .collect();
 
-    // Quint fn `updatedRedelegatedUnbonded`
-    let new_redelegated_unbonds_keys = new_redelegated_unbonds
-        .keys()
-        .cloned()
-        .collect::<HashSet<Epoch>>();
-    let new_epoch_pairs = new_redelegated_unbonds_keys
-        .into_iter()
-        .map(|epoch| (epoch, withdraw_epoch))
-        .collect::<HashSet<_>>();
-
-    let existing_epoch_pairs = redelegated_unbonded
-        .iter(storage)?
-        .map(|res| {
-            let (
-                NestedSubKey::Data {
-                    key: start_epoch,
-                    nested_sub_key:
-                        NestedSubKey::Data {
-                            key: withdraw_epoch,
-                            nested_sub_key: _,
-                        },
-                },
-                _,
-            ) = res.unwrap();
-            (start_epoch, withdraw_epoch)
-        })
-        .collect::<HashSet<_>>();
-
-    let all_epoch_pairs = new_epoch_pairs
-        .union(&existing_epoch_pairs)
-        .cloned()
-        .collect::<HashSet<_>>();
-
-    let updated_redelegated_unbonded = all_epoch_pairs
-        .into_iter()
-        .map(|pair| {
-            let in_existing = existing_epoch_pairs.contains(&pair);
-            let in_new = new_epoch_pairs.contains(&pair);
-            let (start, withdraw) = pair;
-
-            let mut existing: RedelegatedBondsMap = Default::default();
-            for item in redelegated_unbonded
-                .at(&start)
-                .at(&withdraw)
-                .iter(storage)
-                .unwrap()
-            {
-                let (
-                    NestedSubKey::Data {
-                        key: validator,
-                        nested_sub_key: SubKey::Data(epoch),
-                    },
-                    amount,
-                ) = item.unwrap();
-                existing
-                    .entry(validator.clone())
-                    .or_default()
-                    .insert(epoch, amount);
-            }
-
-            if in_existing && in_new {
-                let merged = merge_redelegated_bonds_map(
-                    &existing,
-                    new_redelegated_unbonds.get(&start).unwrap(),
-                );
-                (pair, merged)
-            } else if in_existing {
-                (pair, existing)
-            } else {
-                (pair, new_redelegated_unbonds.get(&start).unwrap().clone())
-            }
-        })
-        .collect::<HashMap<_, _>>();
-
-    Ok(())
+    Ok(new_redelegated_unbonds)
 }
 
 fn merge_redelegated_bonds_map(
@@ -4271,7 +4308,7 @@ where
     }
 
     // TODO: the unbond fn itself needs to be updated for redelegation
-    unbond_tokens(
+    unbond_tokens_NEW(
         storage,
         Some(owner),
         src_validator,

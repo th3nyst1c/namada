@@ -1997,56 +1997,60 @@ where
             .union(&existing_epoch_pairs)
             .cloned()
             .collect::<HashSet<_>>();
-        // Quint `val updatedRedelegatedUnbonded`
-        let updated_redelegated_unbonded: EagerRedelegatedUnbonds =
-            all_epoch_pairs
-                .into_iter()
-                .map(|pair| {
-                    let in_existing = existing_epoch_pairs.contains(&pair);
-                    let in_new = new_epoch_pairs.contains(&pair);
-                    let (start, withdraw) = pair;
+        // Quint `val updatedRedelegatedUnbonded` together with last statement
+        // in `updatedDelegator.with("redelegatedUnbonded", ...`
+        for pair in all_epoch_pairs.into_iter() {
+            let in_existing = existing_epoch_pairs.contains(&pair);
+            let in_new = new_epoch_pairs.contains(&pair);
+            let (start, withdraw) = pair;
 
-                    let mut existing: RedelegatedBondsMap = Default::default();
-                    for item in delegator_redelegated_unbonded
-                        .at(&start)
-                        .at(&withdraw)
-                        .iter(storage)
-                        .unwrap()
-                    {
-                        let (
-                            NestedSubKey::Data {
-                                key: validator,
-                                nested_sub_key: SubKey::Data(epoch),
-                            },
-                            amount,
-                        ) = item.unwrap();
-                        existing
-                            .entry(validator.clone())
-                            .or_default()
-                            .insert(epoch, amount);
-                    }
+            let mut existing: RedelegatedBondsMap = Default::default();
+            let this_redelegated_unbonded =
+                delegator_redelegated_unbonded.at(&start).at(&withdraw);
+            for item in this_redelegated_unbonded.iter(storage)? {
+                let (
+                    NestedSubKey::Data {
+                        key: validator,
+                        nested_sub_key: SubKey::Data(epoch),
+                    },
+                    amount,
+                ) = item?;
+                existing
+                    .entry(validator.clone())
+                    .or_default()
+                    .insert(epoch, amount);
+            }
 
-                    if in_existing && in_new {
-                        let merged = merge_redelegated_bonds_map(
-                            &existing,
-                            new_redelegated_unbonds.get(&start).unwrap(),
-                        );
-                        (pair, merged)
-                    } else if in_existing {
-                        (pair, existing)
-                    } else {
-                        (
-                            pair,
-                            new_redelegated_unbonds
-                                .get(&start)
-                                .unwrap()
-                                .clone(),
-                        )
+            if in_existing && in_new {
+                let merged = merge_redelegated_bonds_map(
+                    &existing,
+                    new_redelegated_unbonds.get(&start).unwrap(),
+                );
+                for (validator, redelegated_unbonds) in merged {
+                    for (redelegation_epoch, change) in redelegated_unbonds {
+                        this_redelegated_unbonded.at(&validator).insert(
+                            storage,
+                            redelegation_epoch,
+                            change,
+                        )?;
                     }
-                })
-                .collect::<HashMap<_, _>>();
+                }
+            } else if in_new {
+                for (validator, redelegated_unbonds) in
+                    new_redelegated_unbonds.get(&start).unwrap()
+                {
+                    for (redelegation_epoch, change) in redelegated_unbonds {
+                        this_redelegated_unbonded.at(&validator).insert(
+                            storage,
+                            *redelegation_epoch,
+                            *change,
+                        )?;
+                    }
+                }
+            }
+        }
     }
-    // TODO `val updatedDelegator`
+    // all `val updatedDelegator` changes are applied at this point
 
     Ok(())
 }

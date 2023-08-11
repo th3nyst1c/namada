@@ -3680,6 +3680,8 @@ pub fn bond_amount<S>(
 where
     S: StorageRead,
 {
+    let params = read_pos_params(storage)?;
+
     // TODO: review this logic carefully, apply rewards
     let slashes = find_validator_slashes(storage, &bond_id.validator)?;
     let slash_rates = slashes.into_iter().fold(
@@ -3710,11 +3712,83 @@ where
             }
             // TODO: think about truncation
             let current_slashed = *rate * delta;
-            total_active
+            total_active = total_active
                 .checked_sub(token::Amount::from(current_slashed))
                 .unwrap_or_default();
         }
     }
+
+    // Add unbonds that are still contributing to stake
+    let unbonds = unbond_handle(&bond_id.source, &bond_id.validator);
+    for next in unbonds.iter(storage)? {
+        let (
+            NestedSubKey::Data {
+                key: start,
+                nested_sub_key: SubKey::Data(withdrawable_epoch),
+            },
+            delta,
+        ) = next?;
+        let end = withdrawable_epoch - params.withdrawable_epoch_offset()
+            + params.pipeline_len;
+
+        if start <= epoch && end > epoch {
+            total += delta;
+            total_active += delta;
+
+            for (&slash_epoch, &rate) in &slash_rates {
+                if start <= slash_epoch && end > slash_epoch {
+                    // TODO: think about truncation
+                    let current_slashed = rate * delta;
+                    total_active = total_active
+                        .checked_sub(current_slashed)
+                        .unwrap_or_default();
+                }
+            }
+        }
+    }
+
+    // Add outgoing redelegations that are still contributing to stake
+    if bond_id.validator != bond_id.source {
+        let redelegated_bonds =
+            delegator_redelegated_bonds_handle(&bond_id.source);
+
+        for res in redelegated_bonds.iter(storage)? {
+            let (
+                NestedSubKey::Data {
+                    key: _dest_validator,
+                    nested_sub_key:
+                        NestedSubKey::Data {
+                            key: end,
+                            nested_sub_key:
+                                NestedSubKey::Data {
+                                    key: src_validator,
+                                    nested_sub_key: SubKey::Data(start),
+                                },
+                        },
+                },
+                delta,
+            ) = res?;
+            if src_validator == bond_id.validator {
+                if start <= epoch && end > epoch {
+                    total += token::Amount::from(delta);
+                    total_active += token::Amount::from(delta);
+
+                    for (&slash_epoch, &rate) in &slash_rates {
+                        if start <= slash_epoch && end > slash_epoch {
+                            // TODO: think about truncation
+                            let current_slashed = rate * delta;
+                            total_active = total_active
+                                .checked_sub(token::Amount::from(
+                                    current_slashed,
+                                ))
+                                .unwrap_or_default();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok((total, total_active))
 }
 
@@ -5155,6 +5229,7 @@ where
                     redel_bond_start,
                 ) && bond_start <= slash.epoch
                     && slash.epoch + params.slash_processing_epoch_offset()
+                    // TODO this may need to be `<=` as in `fn compute_total_unbonded`
                         < infraction_epoch
             })
             .collect::<Vec<_>>();
@@ -6057,7 +6132,13 @@ where
     // cannot be slashed anymore
     let is_not_chained = if let Some(end_epoch) = src_redel_end_epoch {
         // TODO: check bounds for correctness (> and presence of cubic offset)
-        end_epoch + params.slash_processing_epoch_offset() <= current_epoch
+        let last_contrib_epoch = end_epoch.prev();
+        // If the source validator's slashes that would cause slash on
+        // redelegation are now outdated (would have to be processed before or
+        // on start of the current epoch), the redelegation can be redelegated
+        // again
+        last_contrib_epoch + params.slash_processing_epoch_offset()
+            <= current_epoch
     } else {
         true
     };

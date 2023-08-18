@@ -5597,7 +5597,8 @@ fn test_chain_redelegations_aux(mut validators: Vec<GenesisValidator>) {
 
     // Advance to right before the redelegation can be redelegated again
     assert_eq!(redel_end, current_epoch);
-    let epoch_can_redel = redel_end + params.slash_processing_epoch_offset();
+    let epoch_can_redel =
+        redel_end.prev() + params.slash_processing_epoch_offset();
     loop {
         current_epoch = advance_epoch(&mut storage, &params);
         super::process_slashes(&mut storage, current_epoch).unwrap();

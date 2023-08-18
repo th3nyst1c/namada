@@ -469,6 +469,10 @@ impl AbstractPosState {
                     let withdrawn = to_store.entry(epoch).or_default();
                     withdrawn.amount += unbond.tokens.amount;
                     withdrawn.slashes += unbond.tokens.slashes;
+                    for redeleg in unbond.incoming_redelegs.values() {
+                        withdrawn.amount += redeleg.amount;
+                        withdrawn.slashes += redeleg.slashes;
+                    }
                 }
                 !is_withdrawable
             })

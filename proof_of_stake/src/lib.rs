@@ -2624,7 +2624,7 @@ fn compute_slashable_amount(
         .fold(amount, |acc, (_, amnt)| {
             cmp::max(token::Change::zero(), acc - *amnt)
         });
-    slash.rate * updated_amount
+    updated_amount.mul_ceil(slash.rate)
 }
 
 #[derive(Debug, Default)]
@@ -3002,7 +3002,7 @@ fn get_slashed_amount(
     let mut updated_amount = amount;
     let mut computed_amounts = Vec::<SlashedAmount>::new();
 
-    for (infraction_epoch, slash_rate) in slashes {
+    for (&infraction_epoch, &slash_rate) in slashes {
         // println!("Slash epoch: {}, rate: {}", infraction_epoch, slash_rate);
         let mut computed_to_remove = BTreeSet::<Reverse<usize>>::new();
         for (ix, slashed_amount) in computed_amounts.iter().enumerate() {
@@ -3011,7 +3011,7 @@ fn get_slashed_amount(
             // TODO: understand this better (from Informal)
             // TODO: do bounds of this need to be changed with a +/- 1??
             if slashed_amount.epoch + params.slash_processing_epoch_offset()
-                <= *infraction_epoch
+                <= infraction_epoch
             {
                 updated_amount = updated_amount
                     .checked_sub(slashed_amount.amount)
@@ -3026,8 +3026,8 @@ fn get_slashed_amount(
             computed_amounts.remove(item.0);
         }
         computed_amounts.push(SlashedAmount {
-            amount: *slash_rate * updated_amount,
-            epoch: *infraction_epoch,
+            amount: updated_amount.mul_ceil(slash_rate),
+            epoch: infraction_epoch,
         });
     }
     // println!("Finished loop over slashes in `get_slashed_amount`");
@@ -3706,12 +3706,12 @@ where
         total += token::Amount::from(delta);
         total_active += token::Amount::from(delta);
 
-        for (slash_epoch, rate) in &slash_rates {
-            if *slash_epoch < bond_epoch {
+        for (&slash_epoch, &rate) in &slash_rates {
+            if slash_epoch < bond_epoch {
                 continue;
             }
             // TODO: think about truncation
-            let current_slashed = *rate * delta;
+            let current_slashed = delta.mul_ceil(rate);
             total_active = total_active
                 .checked_sub(token::Amount::from(current_slashed))
                 .unwrap_or_default();
@@ -3738,7 +3738,7 @@ where
             for (&slash_epoch, &rate) in &slash_rates {
                 if start <= slash_epoch && end > slash_epoch {
                     // TODO: think about truncation
-                    let current_slashed = rate * delta;
+                    let current_slashed = delta.mul_ceil(rate);
                     total_active = total_active
                         .checked_sub(current_slashed)
                         .unwrap_or_default();
@@ -3776,7 +3776,7 @@ where
                     for (&slash_epoch, &rate) in &slash_rates {
                         if start <= slash_epoch && end > slash_epoch {
                             // TODO: think about truncation
-                            let current_slashed = rate * delta;
+                            let current_slashed = delta.mul_ceil(rate);
                             total_active = total_active
                                 .checked_sub(token::Amount::from(
                                     current_slashed,
@@ -5234,12 +5234,12 @@ where
             })
             .collect::<Vec<_>>();
 
-        let slashed = slash_rate
-            * apply_list_slashes(
-                params,
-                &list_slashes,
-                amount - updated_total_unbonded,
-            );
+        let slashed = apply_list_slashes(
+            params,
+            &list_slashes,
+            amount - updated_total_unbonded,
+        )
+        .mul_ceil(slash_rate);
 
         let list_slashes = slashes
             .iter(storage)?
@@ -5254,12 +5254,12 @@ where
             })
             .collect::<Vec<_>>();
 
-        let slashable_stake = slash_rate
-            * apply_list_slashes(
-                params,
-                &list_slashes,
-                amount - updated_total_unbonded,
-            );
+        let slashable_stake = apply_list_slashes(
+            params,
+            &list_slashes,
+            amount - updated_total_unbonded,
+        )
+        .mul_ceil(slash_rate);
 
         init_tot_unbonded = updated_total_unbonded;
         let map_value = slashed_amounts.entry(epoch).or_default();
@@ -5367,7 +5367,7 @@ where
         )?;
 
         let slashed_amount =
-            slash_rate * (infraction_stake - updated_total_unbonded);
+            (infraction_stake - updated_total_unbonded).mul_ceil(slash_rate);
         let current_stake = validator_deltas_handle(validator)
             .get_sum(storage, epoch, params)?
             .unwrap_or_default()

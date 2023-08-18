@@ -3749,8 +3749,8 @@ impl AbstractPosState {
                 &mut init_redelegated_bond_balance,
             );
 
-            let slashed_amount =
-                slash_rate * (infraction_stake - updated_total_unbonded);
+            let slashed_amount = (infraction_stake - updated_total_unbonded)
+                .mul_ceil(slash_rate);
             let current_stake = self
                 .validator_stakes
                 .get(&epoch)
@@ -4393,7 +4393,7 @@ impl AbstractPosState {
             } else {
                 token::Change::default()
             };
-            let this_slash = total_rate * amount_to_slash;
+            let this_slash = amount_to_slash.mul_ceil(total_rate);
             let diff_slashed_amount = last_slash - this_slash;
             tracing::debug!(
                 "Offset {} diff_slashed_amount {}",
@@ -5141,7 +5141,7 @@ impl AbstractPosState {
             .fold(amount, |acc, (_, amnt)| {
                 cmp::max(token::Change::zero(), acc - *amnt)
             });
-        slash.rate * updated_amount
+        updated_amount.mul_ceil(slash.rate)
     }
 }
 
@@ -5259,12 +5259,12 @@ fn compute_amount_after_slashing(
     let mut computed_amounts = Vec::<SlashedAmount>::new();
     let mut updated_amount = amount;
 
-    for (infraction_epoch, slash_rate) in slashes {
+    for (&infraction_epoch, &slash_rate) in slashes {
         let mut indices_to_remove = BTreeSet::<usize>::new();
 
         for (idx, slashed_amount) in computed_amounts.iter().enumerate() {
             if slashed_amount.epoch + unbonding_len + cubic_slash_window_len
-                < *infraction_epoch
+                < infraction_epoch
             {
                 updated_amount = updated_amount
                     .checked_sub(slashed_amount.amount)
@@ -5276,8 +5276,8 @@ fn compute_amount_after_slashing(
             computed_amounts.remove(idx);
         }
         computed_amounts.push(SlashedAmount {
-            amount: *slash_rate * updated_amount,
-            epoch: *infraction_epoch,
+            amount: updated_amount.mul_ceil(slash_rate),
+            epoch: infraction_epoch,
         });
     }
     updated_amount

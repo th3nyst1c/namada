@@ -1054,7 +1054,8 @@ impl AbstractPosState {
                                 && end >= infraction_epoch
                             {
                                 for (dest, tokens) in redelegs.iter_mut() {
-                                    let slashed = total_rate * tokens.amount;
+                                    let slashed =
+                                        tokens.amount.mul_ceil(total_rate);
                                     tokens.amount -= slashed;
                                     tokens.slashes += slashed;
                                     // Store the redelegation slashes to apply
@@ -1726,7 +1727,7 @@ impl TokensWithSlashes {
     }
 
     fn slash(&mut self, rate: Dec) {
-        let slash_amount = rate * self.amount;
+        let slash_amount = self.amount.mul_ceil(rate);
         self.amount -= slash_amount;
         self.slashes += slash_amount;
     }

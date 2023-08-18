@@ -1523,6 +1523,9 @@ impl ValidatorRecords {
         let mut unique_count = 0_u64;
         for record in self.per_source.values() {
             for bond in record.bonds.values() {
+                if bond.tokens != TokensWithSlashes::default() {
+                    unique_count += 1;
+                }
                 for unbond in bond.unbonds.values() {
                     if unbond.tokens != TokensWithSlashes::default() {
                         unique_count += 1;
@@ -2924,15 +2927,34 @@ impl ConcretePosState {
                     bonded_stake,
                     token::Amount::from_change(deltas_stake)
                 );
-                assert_eq!(
-                    bonded_stake.change(),
-                    ref_state
-                        .validator_stakes
-                        .get(&epoch)
-                        .unwrap()
-                        .get(&validator)
-                        .cloned()
-                        .unwrap()
+                let max_slash_round_err = ref_state
+                    .validator_records
+                    .get(&validator)
+                    .unwrap()
+                    .slash_round_err_tolerance();
+                let ref_stake = ref_state
+                    .validator_stakes
+                    .get(&epoch)
+                    .unwrap()
+                    .get(&validator)
+                    .cloned()
+                    .unwrap();
+                let conc_stake = bonded_stake.change();
+                assert!(
+                    ref_stake <= conc_stake
+                        && conc_stake
+                            <= ref_stake + max_slash_round_err.change(),
+                    "Expected {} ({}), got {}.",
+                    ref_stake.to_string_native(),
+                    if max_slash_round_err.is_zero() {
+                        format!("no slashing rounding error expected")
+                    } else {
+                        format!(
+                            "max slashing rounding error -{}",
+                            max_slash_round_err.to_string_native()
+                        )
+                    },
+                    bonded_stake.to_string_native()
                 );
 
                 let state = crate::validator_state_handle(&validator)
@@ -2976,15 +2998,34 @@ impl ConcretePosState {
                     bonded_stake,
                     token::Amount::from_change(deltas_stake)
                 );
-                assert_eq!(
-                    bonded_stake.change(),
-                    ref_state
-                        .validator_stakes
-                        .get(&epoch)
-                        .unwrap()
-                        .get(&validator)
-                        .cloned()
-                        .unwrap()
+                let max_slash_round_err = ref_state
+                    .validator_records
+                    .get(&validator)
+                    .unwrap()
+                    .slash_round_err_tolerance();
+                let ref_stake = ref_state
+                    .validator_stakes
+                    .get(&epoch)
+                    .unwrap()
+                    .get(&validator)
+                    .cloned()
+                    .unwrap();
+                let conc_stake = bonded_stake.change();
+                assert!(
+                    ref_stake <= conc_stake
+                        && conc_stake
+                            <= ref_stake + max_slash_round_err.change(),
+                    "Expected {} ({}), got {}.",
+                    ref_stake.to_string_native(),
+                    if max_slash_round_err.is_zero() {
+                        format!("no slashing rounding error expected")
+                    } else {
+                        format!(
+                            "max slashing rounding error +{}",
+                            max_slash_round_err.to_string_native()
+                        )
+                    },
+                    bonded_stake.to_string_native()
                 );
 
                 let state = crate::validator_state_handle(&validator)
@@ -3028,14 +3069,14 @@ impl ConcretePosState {
                 )
                 .unwrap()
             {
-                let stake = validator_deltas_handle(&validator)
+                let conc_stake = validator_deltas_handle(&validator)
                     .get_sum(&self.s, epoch, params)
                     .unwrap()
                     .unwrap_or_default();
                 tracing::debug!(
                     "Below-thresh val {}, stake {}",
                     &validator,
-                    stake.to_string_native(),
+                    conc_stake.to_string_native(),
                 );
 
                 let state = crate::validator_state_handle(&validator)
@@ -3054,15 +3095,33 @@ impl ConcretePosState {
                         .cloned()
                         .unwrap()
                 );
-                assert_eq!(
-                    stake,
-                    ref_state
-                        .validator_stakes
-                        .get(&epoch)
-                        .unwrap()
-                        .get(&validator)
-                        .cloned()
-                        .unwrap()
+                let max_slash_round_err = ref_state
+                    .validator_records
+                    .get(&validator)
+                    .map(|r| r.slash_round_err_tolerance())
+                    .unwrap_or_default();
+                let ref_stake = ref_state
+                    .validator_stakes
+                    .get(&epoch)
+                    .unwrap()
+                    .get(&validator)
+                    .cloned()
+                    .unwrap();
+                assert!(
+                    ref_stake >= conc_stake
+                        && ref_stake
+                            <= conc_stake + max_slash_round_err.change(),
+                    "Expected {} ({}), got {}.",
+                    ref_stake.to_string_native(),
+                    if max_slash_round_err.is_zero() {
+                        format!("no slashing rounding error expected")
+                    } else {
+                        format!(
+                            "max slashing rounding error -{}",
+                            max_slash_round_err.to_string_native()
+                        )
+                    },
+                    conc_stake.to_string_native()
                 );
                 assert!(!vals.contains(&validator));
                 vals.insert(validator);
@@ -3089,14 +3148,14 @@ impl ConcretePosState {
                             .cloned()
                             .unwrap()
                     );
-                    let stake = validator_deltas_handle(&val)
+                    let conc_stake = validator_deltas_handle(&val)
                         .get_sum(&self.s, epoch, params)
                         .unwrap()
                         .unwrap_or_default();
                     tracing::debug!(
                         "Jailed val {}, stake {}",
                         &val,
-                        stake.to_string_native()
+                        conc_stake.to_string_native()
                     );
 
                     assert_eq!(
@@ -3109,15 +3168,33 @@ impl ConcretePosState {
                             .cloned()
                             .unwrap()
                     );
-                    assert_eq!(
-                        stake,
-                        ref_state
-                            .validator_stakes
-                            .get(&epoch)
-                            .unwrap()
-                            .get(&val)
-                            .cloned()
-                            .unwrap()
+                    let max_slash_round_err = ref_state
+                        .validator_records
+                        .get(&val)
+                        .map(|r| r.slash_round_err_tolerance())
+                        .unwrap_or_default();
+                    let ref_stake = ref_state
+                        .validator_stakes
+                        .get(&epoch)
+                        .unwrap()
+                        .get(&val)
+                        .cloned()
+                        .unwrap();
+                    assert!(
+                        ref_stake <= conc_stake
+                            && conc_stake
+                                <= ref_stake + max_slash_round_err.change(),
+                        "Expected {} ({}), got {}.",
+                        ref_stake.to_string_native(),
+                        if max_slash_round_err.is_zero() {
+                            format!("no slashing rounding error expected")
+                        } else {
+                            format!(
+                                "max slashing rounding error +{}",
+                                max_slash_round_err.to_string_native()
+                            )
+                        },
+                        conc_stake.to_string_native()
                     );
                     assert!(!vals.contains(&val));
                 }
@@ -3136,16 +3213,17 @@ impl ConcretePosState {
                 .unwrap()
                 .unwrap_or_default();
                 assert!(
-                    ref_stake >= conc_stake
-                        && ref_stake <= conc_stake + max_slash_round_err,
+                    ref_stake <= conc_stake
+                        && conc_stake <= ref_stake + max_slash_round_err,
                     "Stake for validator {validator} in epoch {epoch} is not \
-                     matched against reference stake. Expected {} ({}) got {}.",
+                     matched against reference stake. Expected {} ({}), got \
+                     {}.",
                     ref_stake.to_string_native(),
                     if max_slash_round_err.is_zero() {
                         format!("no slashing rounding error expected")
                     } else {
                         format!(
-                            "max slashing rounding error -{}",
+                            "max slashing rounding error +{}",
                             max_slash_round_err.to_string_native()
                         )
                     },

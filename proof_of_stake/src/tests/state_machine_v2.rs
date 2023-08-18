@@ -1510,6 +1510,29 @@ impl ValidatorRecords {
         }
         total
     }
+
+    /// Find how much slash rounding error at most can be tolerated for slash on
+    /// a total validator's stake vs sum of slashes on unbonded, withdrawn
+    /// or redelegated bonds.
+    ///
+    /// From `n` unbonds and withdrawals from unique epochs there can be
+    /// `token::Amount::from(n - 1)` slash error where the unbonds and
+    /// withdrawals may be slashed more than the sum of validator's stake.
+    fn slash_round_err_tolerance(&self) -> token::Amount {
+        let mut unique_count = 0_u64;
+        for record in self.per_source.values() {
+            for bond in record.bonds.values() {
+                for unbond in bond.unbonds.values() {
+                    if unbond.tokens != TokensWithSlashes::default() {
+                        unique_count += 1;
+                    }
+                    unique_count += unbond.incoming_redelegs.len() as u64;
+                }
+            }
+            unique_count += record.withdrawn.len() as u64;
+        }
+        token::Amount::from(unique_count.checked_sub(1).unwrap_or_default())
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1646,43 +1669,6 @@ impl Records {
         redeleg.amount -= to_sub;
         redeleg.slashes += to_sub;
     }
-
-    // Return map of added and not unbonded bond deltas keyed by their start
-    // epoch
-    fn as_unslashed_bond_deltas(&self) -> BTreeMap<Epoch, token::Change> {
-        let mut deltas = BTreeMap::new();
-        // Add bonds (positive only)
-        for (&start, bond) in &self.bonds {
-            let amount = bond.unbondable_unslashed_stake();
-            if !amount.is_zero() {
-                *deltas.entry(start).or_default() += amount.change();
-            }
-        }
-        deltas
-    }
-
-    // Return map of unbonded deltas keyed by their source bond's start epoch
-    // (outer key) and withdrawal epoch (inner).
-    fn as_unslashed_unbond_deltas(
-        &self,
-    ) -> BTreeMap<Epoch, BTreeMap<Epoch, token::Change>> {
-        let mut deltas =
-            BTreeMap::<Epoch, BTreeMap<Epoch, token::Change>>::new();
-        // Subtract unbonds
-        for (&start, bond) in &self.bonds {
-            for unbond in bond.unbonds.values() {
-                if !unbond.amount_before_slashing().is_zero() {
-                    *deltas
-                        .entry(start)
-                        .or_default()
-                        .entry(unbond.withdrawable_epoch)
-                        .or_default() +=
-                        unbond.amount_before_slashing().change();
-                }
-            }
-        }
-        deltas
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1716,26 +1702,6 @@ impl Bond {
                 .fold(token::Amount::zero(), |acc, tokens| {
                     acc + tokens.amount_before_slashing()
                 })
-    }
-
-    fn as_unslashed_bond_delta(&self, epoch: Epoch) -> token::Amount {
-        self.unbondable_unslashed_stake()
-            + self.outgoing_redelegs.iter().fold(
-                token::Amount::zero(),
-                |acc, (&end, redelegs)| {
-                    // If we're before or on the end epoch the outgoing
-                    // redelegation still contributes to the stake
-                    if end >= epoch {
-                        acc + redelegs
-                            .values()
-                            .fold(token::Amount::zero(), |acc, tokens| {
-                                acc + tokens.amount_before_slashing()
-                            })
-                    } else {
-                        acc
-                    }
-                },
-            )
     }
 
     fn slash(&mut self, rate: Dec) {
@@ -3159,71 +3125,34 @@ impl ConcretePosState {
 
         // Check that validator stakes are matching ref_state
         for (validator, records) in &ref_state.validator_records {
-            // On every epoch from current to withdrawable offset
-            for epoch in
-                current_epoch.iter_range(params.withdrawable_epoch_offset())
-            {
+            let max_slash_round_err = records.slash_round_err_tolerance();
+            // On every epoch from current up to pipeline
+            for epoch in current_epoch.iter_range(params.pipeline_len) {
                 let ref_stake = records.stake(epoch);
                 let conc_stake = crate::read_validator_stake(
                     &self.s, params, validator, epoch,
                 )
                 .unwrap()
                 .unwrap_or_default();
-                assert_eq!(
-                    ref_stake,
-                    conc_stake,
+                assert!(
+                    ref_stake >= conc_stake
+                        && ref_stake <= conc_stake + max_slash_round_err,
                     "Stake for validator {validator} in epoch {epoch} is not \
-                     matched against reference stake. Expected {} got {}.",
+                     matched against reference stake. Expected {} ({}) got {}.",
                     ref_stake.to_string_native(),
+                    if max_slash_round_err.is_zero() {
+                        format!("no slashing rounding error expected")
+                    } else {
+                        format!(
+                            "max slashing rounding error -{}",
+                            max_slash_round_err.to_string_native()
+                        )
+                    },
                     conc_stake.to_string_native()
                 );
             }
         }
         // TODO: expand above to include jailed validators
-
-        // Check that the concrete bond deltas are matching abstract state
-        // for (validator, records) in &ref_state.validator_records {
-        //     for (source, records) in &records.per_source {
-        //         let conc_bonds = crate::bond_handle(source, validator);
-        //         for (start, abs_delta) in records.as_unslashed_bond_deltas()
-        // {             let conc_delta = conc_bonds
-        //                 .get_delta_val(&self.s, start)
-        //                 .unwrap()
-        //                 .unwrap_or_default();
-        //             assert_eq!(
-        //                 abs_delta, conc_delta,
-        //                 "Expected a matching bonds delta for validator \
-        //                  {validator}, source {source}, start epoch {start}. \
-        //                  Expected {abs_delta}, but got {conc_delta}.",
-        //             );
-        //         }
-        //     }
-        // }
-
-        // // Check that the concrete unbond deltas are matching abstract state
-        // for (validator, records) in &ref_state.validator_records {
-        //     for (source, records) in &records.per_source {
-        //         let conc_unbonds = crate::unbond_handle(source, validator);
-        //         for (start, abs_deltas) in
-        // records.as_unslashed_unbond_deltas()         {
-        //             for (withdrawal_epoch, abs_delta) in abs_deltas {
-        //                 let conc_delta = conc_unbonds
-        //                     .at(&start)
-        //                     .get(&self.s, &withdrawal_epoch)
-        //                     .unwrap()
-        //                     .unwrap_or_default()
-        //                     .change();
-        //                 assert_eq!(
-        //                     abs_delta, conc_delta,
-        //                     "Expected a matching unbonds delta for validator
-        // \                      {validator}, source {source}, start
-        // epoch \                      {start}. Expected {abs_delta},
-        // but got \                      {conc_delta}.",
-        //                 );
-        //             }
-        //         }
-        //     }
-        // }
 
         for (validator, records) in &ref_state.validator_records {
             for (source, records) in &records.per_source {

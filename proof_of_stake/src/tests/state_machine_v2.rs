@@ -2951,7 +2951,7 @@ impl ConcretePosState {
                     "Expected {} ({}), got {}.",
                     ref_stake.to_string_native(),
                     if max_slash_round_err.is_zero() {
-                        format!("no slashing rounding error expected")
+                        "no slashing rounding error expected".to_string()
                     } else {
                         format!(
                             "max slashing rounding error -{}",
@@ -3022,7 +3022,7 @@ impl ConcretePosState {
                     "Expected {} ({}), got {}.",
                     ref_stake.to_string_native(),
                     if max_slash_round_err.is_zero() {
-                        format!("no slashing rounding error expected")
+                        "no slashing rounding error expected".to_string()
                     } else {
                         format!(
                             "max slashing rounding error +{}",
@@ -3118,7 +3118,7 @@ impl ConcretePosState {
                     "Expected {} ({}), got {}.",
                     ref_stake.to_string_native(),
                     if max_slash_round_err.is_zero() {
-                        format!("no slashing rounding error expected")
+                        "no slashing rounding error expected".to_string()
                     } else {
                         format!(
                             "max slashing rounding error -{}",
@@ -3191,7 +3191,7 @@ impl ConcretePosState {
                         "Expected {} ({}), got {}.",
                         ref_stake.to_string_native(),
                         if max_slash_round_err.is_zero() {
-                            format!("no slashing rounding error expected")
+                            "no slashing rounding error expected".to_string()
                         } else {
                             format!(
                                 "max slashing rounding error +{}",
@@ -3224,7 +3224,7 @@ impl ConcretePosState {
                      {}.",
                     ref_stake.to_string_native(),
                     if max_slash_round_err.is_zero() {
-                        format!("no slashing rounding error expected")
+                        "no slashing rounding error expected".to_string()
                     } else {
                         format!(
                             "max slashing rounding error +{}",

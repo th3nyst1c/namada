@@ -3768,21 +3768,19 @@ where
                 },
                 delta,
             ) = res?;
-            if src_validator == bond_id.validator {
-                if start <= epoch && end > epoch {
-                    total += token::Amount::from(delta);
-                    total_active += token::Amount::from(delta);
+            if src_validator == bond_id.validator && start <= epoch && end > epoch {
+                total += token::Amount::from(delta);
+                total_active += token::Amount::from(delta);
 
-                    for (&slash_epoch, &rate) in &slash_rates {
-                        if start <= slash_epoch && end > slash_epoch {
-                            // TODO: think about truncation
-                            let current_slashed = delta.mul_ceil(rate);
-                            total_active = total_active
-                                .checked_sub(token::Amount::from(
-                                    current_slashed,
-                                ))
-                                .unwrap_or_default();
-                        }
+                for (&slash_epoch, &rate) in &slash_rates {
+                    if start <= slash_epoch && end > slash_epoch {
+                        // TODO: think about truncation
+                        let current_slashed = delta.mul_ceil(rate);
+                        total_active = total_active
+                            .checked_sub(token::Amount::from(
+                                current_slashed,
+                            ))
+                            .unwrap_or_default();
                     }
                 }
             }

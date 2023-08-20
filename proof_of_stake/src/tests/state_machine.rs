@@ -32,7 +32,7 @@ use crate::parameters::PosParams;
 use crate::tests::arb_params_and_genesis_validators;
 use crate::types::{
     BondId, EagerRedelegatedBondsMap, GenesisValidator, ReverseOrdTokenAmount,
-    Slash, SlashType, SlashedAmount, ValidatorState, WeightedValidator,
+    Slash, SlashType, ValidatorState, WeightedValidator,
 };
 use crate::{
     below_capacity_validator_set_handle, consensus_validator_set_handle,
@@ -3925,7 +3925,7 @@ impl AbstractPosState {
         >,
     ) -> token::Change {
         let mut total = token::Change::zero();
-        for (epoch, _amount) in total_unbonded {
+        for epoch in total_unbonded.keys() {
             if *epoch > infraction_epoch {
                 continue;
             }
@@ -4217,263 +4217,263 @@ impl AbstractPosState {
         false
     }
 
-    fn slash_a_validator(
-        &mut self,
-        validator: &Address,
-        slashes: &[Slash],
-        slashable_stake: token::Change,
-        infraction_epoch: Epoch,
-        cubic_rate: Dec,
-    ) {
-        tracing::debug!(
-            "Val {} slashable stake at infraction {}",
-            validator,
-            slashable_stake.to_string_native(),
-        );
+    // fn slash_a_validator(
+    //     &mut self,
+    //     validator: &Address,
+    //     slashes: &[Slash],
+    //     slashable_stake: token::Change,
+    //     infraction_epoch: Epoch,
+    //     cubic_rate: Dec,
+    // ) {
+    //     tracing::debug!(
+    //         "Val {} slashable stake at infraction {}",
+    //         validator,
+    //         slashable_stake.to_string_native(),
+    //     );
 
-        let mut total_rate = Dec::zero();
+    //     let mut total_rate = Dec::zero();
 
-        for slash in slashes {
-            debug_assert_eq!(slash.epoch, infraction_epoch);
-            let rate =
-                cmp::max(slash.r#type.get_slash_rate(&self.params), cubic_rate);
-            let processed_slash = Slash {
-                epoch: slash.epoch,
-                block_height: slash.block_height,
-                r#type: slash.r#type,
-                rate,
-            };
-            let cur_slashes =
-                self.validator_slashes.entry(validator.clone()).or_default();
-            cur_slashes.push(processed_slash.clone());
+    //     for slash in slashes {
+    //         debug_assert_eq!(slash.epoch, infraction_epoch);
+    //         let rate =
+    //             cmp::max(slash.r#type.get_slash_rate(&self.params),
+    // cubic_rate);         let processed_slash = Slash {
+    //             epoch: slash.epoch,
+    //             block_height: slash.block_height,
+    //             r#type: slash.r#type,
+    //             rate,
+    //         };
+    //         let cur_slashes =
+    //             self.validator_slashes.entry(validator.clone()).or_default();
+    //         cur_slashes.push(processed_slash.clone());
 
-            total_rate += rate;
-        }
-        total_rate = cmp::min(total_rate, Dec::one());
-        tracing::debug!("Total rate: {}", total_rate);
+    //         total_rate += rate;
+    //     }
+    //     total_rate = cmp::min(total_rate, Dec::one());
+    //     tracing::debug!("Total rate: {}", total_rate);
 
-        let mut total_unbonded = token::Amount::default();
-        let mut sum_post_bonds = token::Change::default();
+    //     let mut total_unbonded = token::Amount::default();
+    //     let mut sum_post_bonds = token::Change::default();
 
-        for epoch in (infraction_epoch.0 + 1)..self.epoch.0 {
-            tracing::debug!("\nEpoch {}", epoch);
-            let mut recent_unbonds = token::Change::default();
-            let unbond_records = self
-                .total_unbonded
-                .entry(validator.clone())
-                .or_default()
-                .get(&Epoch(epoch))
-                .cloned()
-                .unwrap_or_default();
-            for (start, unbond_amount) in unbond_records {
-                tracing::debug!(
-                    "UnbondRecord: amount = {}, start_epoch {}",
-                    &unbond_amount.to_string_native(),
-                    &start
-                );
-                if start <= infraction_epoch {
-                    let slashes_for_this_unbond = self
-                        .validator_slashes
-                        .get(validator)
-                        .cloned()
-                        .unwrap_or_default()
-                        .iter()
-                        .filter(|&s| {
-                            start <= s.epoch
-                                && s.epoch
-                                    + self.params.unbonding_len
-                                    + self.params.cubic_slashing_window_length
-                                    < infraction_epoch
-                        })
-                        .cloned()
-                        .fold(BTreeMap::<Epoch, Dec>::new(), |mut acc, s| {
-                            let cur = acc.entry(s.epoch).or_default();
-                            *cur += s.rate;
-                            acc
-                        });
-                    tracing::debug!(
-                        "Slashes for this unbond: {:?}",
-                        slashes_for_this_unbond
-                    );
-                    total_unbonded += compute_amount_after_slashing(
-                        &slashes_for_this_unbond,
-                        unbond_amount,
-                        self.params.unbonding_len,
-                        self.params.cubic_slashing_window_length,
-                    );
-                } else {
-                    recent_unbonds += unbond_amount.change();
-                }
+    //     for epoch in (infraction_epoch.0 + 1)..self.epoch.0 {
+    //         tracing::debug!("\nEpoch {}", epoch);
+    //         let mut recent_unbonds = token::Change::default();
+    //         let unbond_records = self
+    //             .total_unbonded
+    //             .entry(validator.clone())
+    //             .or_default()
+    //             .get(&Epoch(epoch))
+    //             .cloned()
+    //             .unwrap_or_default();
+    //         for (start, unbond_amount) in unbond_records {
+    //             tracing::debug!(
+    //                 "UnbondRecord: amount = {}, start_epoch {}",
+    //                 &unbond_amount.to_string_native(),
+    //                 &start
+    //             );
+    //             if start <= infraction_epoch {
+    //                 let slashes_for_this_unbond = self
+    //                     .validator_slashes
+    //                     .get(validator)
+    //                     .cloned()
+    //                     .unwrap_or_default()
+    //                     .iter()
+    //                     .filter(|&s| {
+    //                         start <= s.epoch
+    //                             && s.epoch
+    //                                 + self.params.unbonding_len
+    //                                 +
+    // self.params.cubic_slashing_window_length
+    // < infraction_epoch                     })
+    //                     .cloned()
+    //                     .fold(BTreeMap::<Epoch, Dec>::new(), |mut acc, s| {
+    //                         let cur = acc.entry(s.epoch).or_default();
+    //                         *cur += s.rate;
+    //                         acc
+    //                     });
+    //                 tracing::debug!(
+    //                     "Slashes for this unbond: {:?}",
+    //                     slashes_for_this_unbond
+    //                 );
+    //                 total_unbonded += compute_amount_after_slashing(
+    //                     &slashes_for_this_unbond,
+    //                     unbond_amount,
+    //                     self.params.unbonding_len,
+    //                     self.params.cubic_slashing_window_length,
+    //                 );
+    //             } else {
+    //                 recent_unbonds += unbond_amount.change();
+    //             }
 
-                tracing::debug!(
-                    "Total unbonded (epoch {}) w slashing = {}",
-                    epoch,
-                    total_unbonded.to_string_native()
-                );
-            }
-            sum_post_bonds += self
-                .total_bonded
-                .get(validator)
-                .and_then(|bonded| bonded.get(&Epoch(epoch)))
-                .cloned()
-                .unwrap_or_default()
-                - recent_unbonds;
-        }
-        tracing::debug!("Computing adjusted amounts now");
+    //             tracing::debug!(
+    //                 "Total unbonded (epoch {}) w slashing = {}",
+    //                 epoch,
+    //                 total_unbonded.to_string_native()
+    //             );
+    //         }
+    //         sum_post_bonds += self
+    //             .total_bonded
+    //             .get(validator)
+    //             .and_then(|bonded| bonded.get(&Epoch(epoch)))
+    //             .cloned()
+    //             .unwrap_or_default()
+    //             - recent_unbonds;
+    //     }
+    //     tracing::debug!("Computing adjusted amounts now");
 
-        let mut last_slash = token::Change::default();
-        for offset in 0..self.params.pipeline_len {
-            tracing::debug!(
-                "Epoch {}\nLast slash = {}",
-                self.epoch + offset,
-                last_slash.to_string_native(),
-            );
-            let mut recent_unbonds = token::Change::default();
-            let unbond_records = self
-                .total_unbonded
-                .get(validator)
-                .unwrap()
-                .get(&(self.epoch + offset))
-                .cloned()
-                .unwrap_or_default();
-            for (start, unbond_amount) in unbond_records {
-                tracing::debug!(
-                    "UnbondRecord: amount = {}, start_epoch {}",
-                    unbond_amount.to_string_native(),
-                    &start
-                );
-                if start <= infraction_epoch {
-                    let slashes_for_this_unbond = self
-                        .validator_slashes
-                        .get(validator)
-                        .cloned()
-                        .unwrap_or_default()
-                        .iter()
-                        .filter(|&s| {
-                            start <= s.epoch
-                                && s.epoch
-                                    + self.params.unbonding_len
-                                    + self.params.cubic_slashing_window_length
-                                    < infraction_epoch
-                        })
-                        .cloned()
-                        .fold(BTreeMap::<Epoch, Dec>::new(), |mut acc, s| {
-                            let cur = acc.entry(s.epoch).or_default();
-                            *cur += s.rate;
-                            acc
-                        });
-                    tracing::debug!(
-                        "Slashes for this unbond: {:?}",
-                        slashes_for_this_unbond
-                    );
+    //     let mut last_slash = token::Change::default();
+    //     for offset in 0..self.params.pipeline_len {
+    //         tracing::debug!(
+    //             "Epoch {}\nLast slash = {}",
+    //             self.epoch + offset,
+    //             last_slash.to_string_native(),
+    //         );
+    //         let mut recent_unbonds = token::Change::default();
+    //         let unbond_records = self
+    //             .total_unbonded
+    //             .get(validator)
+    //             .unwrap()
+    //             .get(&(self.epoch + offset))
+    //             .cloned()
+    //             .unwrap_or_default();
+    //         for (start, unbond_amount) in unbond_records {
+    //             tracing::debug!(
+    //                 "UnbondRecord: amount = {}, start_epoch {}",
+    //                 unbond_amount.to_string_native(),
+    //                 &start
+    //             );
+    //             if start <= infraction_epoch {
+    //                 let slashes_for_this_unbond = self
+    //                     .validator_slashes
+    //                     .get(validator)
+    //                     .cloned()
+    //                     .unwrap_or_default()
+    //                     .iter()
+    //                     .filter(|&s| {
+    //                         start <= s.epoch
+    //                             && s.epoch
+    //                                 + self.params.unbonding_len
+    //                                 +
+    // self.params.cubic_slashing_window_length
+    // < infraction_epoch                     })
+    //                     .cloned()
+    //                     .fold(BTreeMap::<Epoch, Dec>::new(), |mut acc, s| {
+    //                         let cur = acc.entry(s.epoch).or_default();
+    //                         *cur += s.rate;
+    //                         acc
+    //                     });
+    //                 tracing::debug!(
+    //                     "Slashes for this unbond: {:?}",
+    //                     slashes_for_this_unbond
+    //                 );
 
-                    total_unbonded += compute_amount_after_slashing(
-                        &slashes_for_this_unbond,
-                        unbond_amount,
-                        self.params.unbonding_len,
-                        self.params.cubic_slashing_window_length,
-                    );
-                } else {
-                    recent_unbonds += unbond_amount.change();
-                }
+    //                 total_unbonded += compute_amount_after_slashing(
+    //                     &slashes_for_this_unbond,
+    //                     unbond_amount,
+    //                     self.params.unbonding_len,
+    //                     self.params.cubic_slashing_window_length,
+    //                 );
+    //             } else {
+    //                 recent_unbonds += unbond_amount.change();
+    //             }
 
-                tracing::debug!(
-                    "Total unbonded (offset {}) w slashing = {}",
-                    offset,
-                    total_unbonded.to_string_native()
-                );
-            }
-            tracing::debug!(
-                "slashable stake {}, total unbonded {}",
-                slashable_stake.to_string_native(),
-                total_unbonded.to_string_native(),
-            );
-            let amount_to_slash = if slashable_stake > total_unbonded.change() {
-                slashable_stake - total_unbonded.change()
-            } else {
-                token::Change::default()
-            };
-            let this_slash = amount_to_slash.mul_ceil(total_rate);
-            let diff_slashed_amount = last_slash - this_slash;
-            tracing::debug!(
-                "Offset {} diff_slashed_amount {}",
-                offset,
-                diff_slashed_amount.to_string_native(),
-            );
-            last_slash = this_slash;
-            // total_unbonded = token::Amount::default();
+    //             tracing::debug!(
+    //                 "Total unbonded (offset {}) w slashing = {}",
+    //                 offset,
+    //                 total_unbonded.to_string_native()
+    //             );
+    //         }
+    //         tracing::debug!(
+    //             "slashable stake {}, total unbonded {}",
+    //             slashable_stake.to_string_native(),
+    //             total_unbonded.to_string_native(),
+    //         );
+    //         let amount_to_slash = if slashable_stake >
+    // total_unbonded.change() {             slashable_stake -
+    // total_unbonded.change()         } else {
+    //             token::Change::default()
+    //         };
+    //         let this_slash = amount_to_slash.mul_ceil(total_rate);
+    //         let diff_slashed_amount = last_slash - this_slash;
+    //         tracing::debug!(
+    //             "Offset {} diff_slashed_amount {}",
+    //             offset,
+    //             diff_slashed_amount.to_string_native(),
+    //         );
+    //         last_slash = this_slash;
+    //         // total_unbonded = token::Amount::default();
 
-            // Update the voting powers (consider that the stake
-            // is discrete) let
-            // validator_stake = state
-            //     .validator_stakes
-            //     .entry(state.epoch + offset)
-            //     .or_default()
-            //     .entry(validator.clone())
-            //     .or_default();
-            // *validator_stake -= diff_slashed_amount;
+    //         // Update the voting powers (consider that the stake
+    //         // is discrete) let
+    //         // validator_stake = state
+    //         //     .validator_stakes
+    //         //     .entry(state.epoch + offset)
+    //         //     .or_default()
+    //         //     .entry(validator.clone())
+    //         //     .or_default();
+    //         // *validator_stake -= diff_slashed_amount;
 
-            tracing::debug!("Updating ABSTRACT voting powers");
-            sum_post_bonds += self
-                .total_bonded
-                .get(validator)
-                .and_then(|bonded| bonded.get(&(self.epoch + offset)))
-                .cloned()
-                .unwrap_or_default()
-                - recent_unbonds;
+    //         tracing::debug!("Updating ABSTRACT voting powers");
+    //         sum_post_bonds += self
+    //             .total_bonded
+    //             .get(validator)
+    //             .and_then(|bonded| bonded.get(&(self.epoch + offset)))
+    //             .cloned()
+    //             .unwrap_or_default()
+    //             - recent_unbonds;
 
-            tracing::debug!(
-                "\nUnslashable bonds = {}",
-                sum_post_bonds.to_string_native()
-            );
-            let validator_stake_at_offset = self
-                .validator_stakes
-                .entry(self.epoch + offset)
-                .or_default()
-                .entry(validator.clone())
-                .or_default();
+    //         tracing::debug!(
+    //             "\nUnslashable bonds = {}",
+    //             sum_post_bonds.to_string_native()
+    //         );
+    //         let validator_stake_at_offset = self
+    //             .validator_stakes
+    //             .entry(self.epoch + offset)
+    //             .or_default()
+    //             .entry(validator.clone())
+    //             .or_default();
 
-            let slashable_stake_at_offset =
-                *validator_stake_at_offset - sum_post_bonds;
-            tracing::debug!(
-                "Val stake pre (epoch {}) = {}",
-                self.epoch + offset,
-                validator_stake_at_offset.to_string_native(),
-            );
-            tracing::debug!(
-                "Slashable stake at offset = {}",
-                slashable_stake_at_offset.to_string_native(),
-            );
-            let change =
-                cmp::max(-slashable_stake_at_offset, diff_slashed_amount);
+    //         let slashable_stake_at_offset =
+    //             *validator_stake_at_offset - sum_post_bonds;
+    //         tracing::debug!(
+    //             "Val stake pre (epoch {}) = {}",
+    //             self.epoch + offset,
+    //             validator_stake_at_offset.to_string_native(),
+    //         );
+    //         tracing::debug!(
+    //             "Slashable stake at offset = {}",
+    //             slashable_stake_at_offset.to_string_native(),
+    //         );
+    //         let change =
+    //             cmp::max(-slashable_stake_at_offset, diff_slashed_amount);
 
-            tracing::debug!("Change = {}", change.to_string_native());
-            *validator_stake_at_offset += change;
+    //         tracing::debug!("Change = {}", change.to_string_native());
+    //         *validator_stake_at_offset += change;
 
-            for os in (offset + 1)..=self.params.pipeline_len {
-                tracing::debug!("Adjust epoch {}", self.epoch + os);
-                let offset_stake = self
-                    .validator_stakes
-                    .entry(self.epoch + os)
-                    .or_default()
-                    .entry(validator.clone())
-                    .or_default();
-                *offset_stake += change;
-                // let mut new_stake =
-                //     *validator_stake - diff_slashed_amount;
-                // if new_stake < 0_i128 {
-                //     new_stake = 0_i128;
-                // }
+    //         for os in (offset + 1)..=self.params.pipeline_len {
+    //             tracing::debug!("Adjust epoch {}", self.epoch + os);
+    //             let offset_stake = self
+    //                 .validator_stakes
+    //                 .entry(self.epoch + os)
+    //                 .or_default()
+    //                 .entry(validator.clone())
+    //                 .or_default();
+    //             *offset_stake += change;
+    //             // let mut new_stake =
+    //             //     *validator_stake - diff_slashed_amount;
+    //             // if new_stake < 0_i128 {
+    //             //     new_stake = 0_i128;
+    //             // }
 
-                // *validator_stake = new_stake;
-                tracing::debug!(
-                    "New stake at epoch {} = {}",
-                    self.epoch + os,
-                    offset_stake.to_string_native()
-                );
-            }
-        }
-    }
+    //             // *validator_stake = new_stake;
+    //             tracing::debug!(
+    //                 "New stake at epoch {} = {}",
+    //                 self.epoch + os,
+    //                 offset_stake.to_string_native()
+    //             );
+    //         }
+    //     }
+    // }
 
     /// Get the pipeline epoch
     fn pipeline(&self) -> Epoch {
@@ -5250,43 +5250,43 @@ fn arb_slash(state: &AbstractPosState) -> impl Strategy<Value = Transition> {
     )
 }
 
-fn compute_amount_after_slashing(
-    slashes: &BTreeMap<Epoch, Dec>,
-    amount: token::Amount,
-    unbonding_len: u64,
-    cubic_slash_window_len: u64,
-) -> token::Amount {
-    let mut computed_amounts = Vec::<SlashedAmount>::new();
-    let mut updated_amount = amount;
+// fn compute_amount_after_slashing(
+//     slashes: &BTreeMap<Epoch, Dec>,
+//     amount: token::Amount,
+//     unbonding_len: u64,
+//     cubic_slash_window_len: u64,
+// ) -> token::Amount {
+//     let mut computed_amounts = Vec::<SlashedAmount>::new();
+//     let mut updated_amount = amount;
 
-    for (&infraction_epoch, &slash_rate) in slashes {
-        let mut indices_to_remove = BTreeSet::<usize>::new();
+//     for (&infraction_epoch, &slash_rate) in slashes {
+//         let mut indices_to_remove = BTreeSet::<usize>::new();
 
-        for (idx, slashed_amount) in computed_amounts.iter().enumerate() {
-            if slashed_amount.epoch + unbonding_len + cubic_slash_window_len
-                < infraction_epoch
-            {
-                updated_amount = updated_amount
-                    .checked_sub(slashed_amount.amount)
-                    .unwrap_or_default();
-                indices_to_remove.insert(idx);
-            }
-        }
-        for idx in indices_to_remove.into_iter().rev() {
-            computed_amounts.remove(idx);
-        }
-        computed_amounts.push(SlashedAmount {
-            amount: updated_amount.mul_ceil(slash_rate),
-            epoch: infraction_epoch,
-        });
-    }
-    updated_amount
-        .checked_sub(
-            computed_amounts
-                .iter()
-                .fold(token::Amount::default(), |sum, computed| {
-                    sum + computed.amount
-                }),
-        )
-        .unwrap_or_default()
-}
+//         for (idx, slashed_amount) in computed_amounts.iter().enumerate() {
+//             if slashed_amount.epoch + unbonding_len + cubic_slash_window_len
+//                 < infraction_epoch
+//             {
+//                 updated_amount = updated_amount
+//                     .checked_sub(slashed_amount.amount)
+//                     .unwrap_or_default();
+//                 indices_to_remove.insert(idx);
+//             }
+//         }
+//         for idx in indices_to_remove.into_iter().rev() {
+//             computed_amounts.remove(idx);
+//         }
+//         computed_amounts.push(SlashedAmount {
+//             amount: updated_amount.mul_ceil(slash_rate),
+//             epoch: infraction_epoch,
+//         });
+//     }
+//     updated_amount
+//         .checked_sub(
+//             computed_amounts
+//                 .iter()
+//                 .fold(token::Amount::default(), |sum, computed| {
+//                     sum + computed.amount
+//                 }),
+//         )
+//         .unwrap_or_default()
+// }

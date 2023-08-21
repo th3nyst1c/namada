@@ -1041,8 +1041,10 @@ impl AbstractPosState {
             }
         }
 
-        let mut redelegations_to_slash =
-            BTreeMap::<Address, BTreeMap<Address, token::Amount>>::new();
+        let mut redelegations_to_slash = BTreeMap::<
+            Address,
+            BTreeMap<Address, BTreeMap<Epoch, token::Amount>>,
+        >::new();
         for (addr, records) in self.validator_records.iter_mut() {
             if addr == validator {
                 for (source, records) in records.per_source.iter_mut() {
@@ -1067,7 +1069,13 @@ impl AbstractPosState {
                                     redelegations_to_slash
                                         .entry(dest.clone())
                                         .or_default()
-                                        .insert(source.clone(), slashed);
+                                        .entry(source.clone())
+                                        .or_default()
+                                        .insert(
+                                            // start epoch of redelegation
+                                            end.next(),
+                                            slashed,
+                                        );
                                 }
                             }
                         }
@@ -1078,18 +1086,20 @@ impl AbstractPosState {
         // Apply redelegation slashes on destination validator
         for (validator, redelegations) in redelegations_to_slash {
             for (source, tokens) in redelegations {
-                let records = self
-                    .validator_records
-                    .get_mut(&validator)
-                    .unwrap()
-                    .per_source
-                    .get_mut(&source)
-                    .unwrap();
-                records.subtract_redelegation_slash(
-                    &validator,
-                    infraction_epoch,
-                    tokens,
-                );
+                for (redelegation_start, tokens) in tokens {
+                    let records = self
+                        .validator_records
+                        .get_mut(&validator)
+                        .unwrap()
+                        .per_source
+                        .get_mut(&source)
+                        .unwrap();
+                    records.subtract_redelegation_slash(
+                        &validator,
+                        redelegation_start,
+                        tokens,
+                    );
+                }
             }
         }
 
@@ -1652,24 +1662,22 @@ impl Records {
     fn subtract_redelegation_slash(
         &mut self,
         src_validator: &Address,
-        infraction_epoch: Epoch,
+        redelegation_start: Epoch,
         mut to_sub: token::Amount,
     ) {
-        let bond = self.bonds.get_mut(&infraction_epoch).unwrap();
-        for (&end, unbond) in bond.unbonds.iter_mut() {
-            if end >= infraction_epoch {
-                if let Some(redeleg) =
-                    unbond.incoming_redelegs.get_mut(src_validator)
-                {
-                    if redeleg.amount >= to_sub {
-                        redeleg.amount -= to_sub;
-                        redeleg.slashes += to_sub;
-                        return;
-                    } else {
-                        to_sub -= redeleg.amount;
-                        redeleg.slashes += unbond.tokens.amount;
-                        redeleg.amount = token::Amount::zero();
-                    }
+        let bond = self.bonds.get_mut(&redelegation_start).unwrap();
+        for unbond in bond.unbonds.values_mut() {
+            if let Some(redeleg) =
+                unbond.incoming_redelegs.get_mut(src_validator)
+            {
+                if redeleg.amount >= to_sub {
+                    redeleg.amount -= to_sub;
+                    redeleg.slashes += to_sub;
+                    return;
+                } else {
+                    to_sub -= redeleg.amount;
+                    redeleg.slashes += unbond.tokens.amount;
+                    redeleg.amount = token::Amount::zero();
                 }
             }
         }
@@ -2954,7 +2962,7 @@ impl ConcretePosState {
                         "no slashing rounding error expected".to_string()
                     } else {
                         format!(
-                            "max slashing rounding error -{}",
+                            "max slashing rounding error +{}",
                             max_slash_round_err.to_string_native()
                         )
                     },

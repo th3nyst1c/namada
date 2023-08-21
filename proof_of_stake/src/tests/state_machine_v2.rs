@@ -1084,12 +1084,12 @@ impl AbstractPosState {
             }
         }
         // Apply redelegation slashes on destination validator
-        for (validator, redelegations) in redelegations_to_slash {
+        for (dest_validator, redelegations) in redelegations_to_slash {
             for (source, tokens) in redelegations {
                 for (redelegation_start, tokens) in tokens {
                     let records = self
                         .validator_records
-                        .get_mut(&validator)
+                        .get_mut(&dest_validator)
                         .unwrap()
                         .per_source
                         .get_mut(&source)

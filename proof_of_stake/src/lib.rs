@@ -3365,7 +3365,7 @@ where
         );
     }
     let slashes = find_validator_slashes(storage, validator)?;
-    dbg!(&slashes);
+    // dbg!(&slashes);
 
     // `val resultSlashing`
     let result_slashing = compute_amount_after_slashing_withdraw(
@@ -3374,7 +3374,7 @@ where
         &unbonds_and_redelegated_unbonds,
         slashes,
     )?;
-    dbg!(&result_slashing);
+    // dbg!(&result_slashing);
     let withdrawable_amount = result_slashing.sum;
     tracing::debug!(
         "Withdrawing total {}",
@@ -3768,7 +3768,10 @@ where
                 },
                 delta,
             ) = res?;
-            if src_validator == bond_id.validator && start <= epoch && end > epoch {
+            if src_validator == bond_id.validator
+                && start <= epoch
+                && end > epoch
+            {
                 total += token::Amount::from(delta);
                 total_active += token::Amount::from(delta);
 
@@ -3777,9 +3780,7 @@ where
                         // TODO: think about truncation
                         let current_slashed = delta.mul_ceil(rate);
                         total_active = total_active
-                            .checked_sub(token::Amount::from(
-                                current_slashed,
-                            ))
+                            .checked_sub(token::Amount::from(current_slashed))
                             .unwrap_or_default();
                     }
                 }

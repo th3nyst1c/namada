@@ -127,9 +127,10 @@ struct AbstractPosState {
     below_threshold_set: BTreeMap<Epoch, HashSet<Address>>,
     /// Validator states. Pipelined.
     validator_states: BTreeMap<Epoch, BTreeMap<Address, ValidatorState>>,
-    /// Unbonded bonds. The outer key for Epoch is pipeline + unbonding offset
-    /// from epoch in which the unbond is applied.
-    unbonds: BTreeMap<Epoch, BTreeMap<BondId, token::Amount>>,
+    /// Unbonded bonds. The outer key for Epoch is pipeline + unbonding +
+    /// cubic_window offset from epoch in which the unbond transition
+    /// occurs.
+    unbonds: BTreeMap<(Epoch, Epoch), BTreeMap<BondId, token::Amount>>,
     /// Validator slashes post-processing
     validator_slashes: BTreeMap<Address, Vec<Slash>>,
     /// Enqueued slashes pre-processing
@@ -450,20 +451,20 @@ impl StateMachineTest for ConcretePosState {
                 // Check that the unbond records are the same
                 // TODO: figure out how we get entries with 0 amount in the
                 // abstract version (and prevent)
-                let mut abs_unbond_records = ref_state
+                let mut abs_total_unbonded = ref_state
                     .total_unbonded
                     .get(&id.validator)
                     .cloned()
                     .unwrap();
-                abs_unbond_records.retain(|_, inner_map| {
+                abs_total_unbonded.retain(|_, inner_map| {
                     inner_map.retain(|_, value| !value.is_zero());
                     !inner_map.is_empty()
                 });
-                let conc_unbond_records =
+                let conc_total_unbonded =
                     crate::total_unbonded_handle(&id.validator)
                         .collect_map(&state.s)
                         .unwrap();
-                assert_eq!(abs_unbond_records, conc_unbond_records);
+                assert_eq!(abs_total_unbonded, conc_total_unbonded);
             }
             Transition::Withdraw {
                 id: BondId { source, validator },
@@ -2010,13 +2011,23 @@ impl ReferenceStateMachine for AbstractPosState {
                 println!("\nABSTRACT Withdraw, id = {}", id);
 
                 // Remove all withdrawable unbonds with this bond ID
-                for (epoch, unbonds) in state.unbonds.iter_mut() {
-                    if *epoch <= state.epoch {
+                for ((_start_epoch, withdraw_epoch), unbonds) in
+                    state.unbonds.iter_mut()
+                {
+                    // let redelegated_unbonds = state
+                    //     .delegator_redelegated_unbonded
+                    //     .entry(id.source.clone())
+                    //     .or_default()
+                    //     .entry(id.validator.clone())
+                    //     .or_default()
+                    //     .entry((*start_epoch, withdraw_epoch*))
+                    //     .or_default();
+                    if *withdraw_epoch <= state.epoch {
                         unbonds.remove(id);
                     }
                 }
                 // Remove any epochs that have no unbonds left
-                state.unbonds.retain(|_epoch, unbonds| !unbonds.is_empty());
+                state.unbonds.retain(|_epochs, unbonds| !unbonds.is_empty());
 
                 // TODO: should we do anything here for slashing?
             }
@@ -2660,12 +2671,12 @@ impl AbstractPosState {
             .or_default()
             .entry(pipeline_epoch)
             .or_default();
-        let unbonds = self
-            .unbonds
-            .entry(withdraw_epoch)
-            .or_default()
-            .entry(id.clone())
-            .or_default();
+        // let unbonds = self
+        //     .unbonds
+        //     .entry(withdraw_epoch)
+        //     .or_default()
+        //     .entry(id.clone())
+        //     .or_default();
 
         let delegator_redelegated_bonds = self
             .delegator_redelegated_bonded
@@ -2759,10 +2770,19 @@ impl AbstractPosState {
         if let Some((bond_epoch, new_bond_amt)) = bonds_to_remove.new_entry {
             bonds.insert(bond_epoch, new_bond_amt);
         }
-        *unbonds += new_unbonds
-            .values()
-            .map(|amount| token::Amount::from(*amount))
-            .sum::<token::Amount>();
+        for (epoch_pair, amount) in &new_unbonds {
+            let unbonds = self
+                .unbonds
+                .entry(*epoch_pair)
+                .or_default()
+                .entry(id.clone())
+                .or_default();
+            *unbonds += token::Amount::from(*amount)
+        }
+        // *unbonds += new_unbonds
+        //     .values()
+        //     .map(|amount| token::Amount::from(*amount))
+        //     .sum::<token::Amount>();
 
         tracing::debug!("Bonds after decrementing");
         for (start, amnt) in bonds.iter() {
@@ -4556,8 +4576,8 @@ impl AbstractPosState {
     fn withdrawable_unbonds(&self) -> BTreeMap<BondId, token::Amount> {
         self.unbonds.iter().fold(
             BTreeMap::<BondId, token::Amount>::new(),
-            |mut acc, (epoch, unbonds)| {
-                if *epoch <= self.epoch {
+            |mut acc, ((_start_epoch, withdraw_epoch), unbonds)| {
+                if *withdraw_epoch <= self.epoch {
                     for (id, amount) in unbonds {
                         if *amount > token::Amount::default() {
                             *acc.entry(id.clone()).or_default() += *amount;

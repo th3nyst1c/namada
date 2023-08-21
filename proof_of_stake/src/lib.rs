@@ -3786,6 +3786,55 @@ where
                 }
             }
         }
+
+        // Add outgoing redelegation unbonds that are still contributing to
+        // the source validator's stake
+        let redelegated_unbonds =
+            delegator_redelegated_unbonds_handle(&bond_id.source);
+        for res in redelegated_unbonds.iter(storage)? {
+            let (
+                NestedSubKey::Data {
+                    key: _dest_validator,
+                    nested_sub_key:
+                        NestedSubKey::Data {
+                            key: start,
+                            nested_sub_key:
+                                NestedSubKey::Data {
+                                    key: withdraw_epoch,
+                                    nested_sub_key:
+                                        NestedSubKey::Data {
+                                            key: src_validator,
+                                            nested_sub_key:
+                                                SubKey::Data(redelegation_epoch),
+                                        },
+                                },
+                        },
+                },
+                delta,
+            ) = res?;
+            let end = withdraw_epoch - params.withdrawable_epoch_offset()
+                + params.pipeline_len;
+            if src_validator == bond_id.validator
+                // If the unbonded bond was redelegated after this epoch ...
+                && redelegation_epoch > epoch
+                // ... the start was before or at this epoch ...
+                && start <= epoch
+                // ... and the end after this epoch
+                && end > epoch
+            {
+                total += token::Amount::from(delta);
+                total_active += token::Amount::from(delta);
+
+                for (&slash_epoch, &rate) in &slash_rates {
+                    if start <= slash_epoch && end > slash_epoch {
+                        let current_slashed = delta.mul_ceil(rate);
+                        total_active = total_active
+                            .checked_sub(token::Amount::from(current_slashed))
+                            .unwrap_or_default();
+                    }
+                }
+            }
+        }
     }
 
     Ok((total, total_active))

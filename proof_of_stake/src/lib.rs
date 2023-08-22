@@ -1083,7 +1083,7 @@ where
             &params,
             validator,
             amount,
-            current_epoch,
+            pipeline_epoch,
         )?;
     }
 
@@ -1217,7 +1217,7 @@ fn update_validator_set<S>(
     params: &PosParams,
     validator: &Address,
     token_change: token::Change,
-    current_epoch: Epoch,
+    epoch: Epoch,
 ) -> storage_api::Result<()>
 where
     S: StorageRead + StorageWrite,
@@ -1225,22 +1225,19 @@ where
     if token_change.is_zero() {
         return Ok(());
     }
-    let pipeline_epoch = current_epoch + params.pipeline_len;
+    // let pipeline_epoch = current_epoch + params.pipeline_len;
     tracing::debug!(
-        "Update epoch for validator set: {pipeline_epoch}, validator: \
-         {validator}"
+        "Update epoch for validator set: {epoch}, validator: {validator}"
     );
     let consensus_validator_set = consensus_validator_set_handle();
     let below_capacity_validator_set = below_capacity_validator_set_handle();
 
     // Validator sets at the pipeline offset
-    let consensus_val_handle = consensus_validator_set.at(&pipeline_epoch);
-    let below_capacity_val_handle =
-        below_capacity_validator_set.at(&pipeline_epoch);
+    let consensus_val_handle = consensus_validator_set.at(&epoch);
+    let below_capacity_val_handle = below_capacity_validator_set.at(&epoch);
 
-    let tokens_pre =
-        read_validator_stake(storage, params, validator, pipeline_epoch)?
-            .unwrap_or_default();
+    let tokens_pre = read_validator_stake(storage, params, validator, epoch)?
+        .unwrap_or_default();
 
     // tracing::debug!("VALIDATOR STAKE BEFORE UPDATE: {}", tokens_pre);
 
@@ -1257,12 +1254,8 @@ where
 
     // The position is only set when the validator is in consensus or
     // below_capacity set (not in below_threshold set)
-    let position = read_validator_set_position(
-        storage,
-        validator,
-        pipeline_epoch,
-        params,
-    )?;
+    let position =
+        read_validator_set_position(storage, validator, epoch, params)?;
     if let Some(position) = position {
         let consensus_vals_pre = consensus_val_handle.at(&tokens_pre);
 
@@ -1296,13 +1289,13 @@ where
                 validator_state_handle(validator).set(
                     storage,
                     ValidatorState::BelowThreshold,
-                    current_epoch,
-                    params.pipeline_len,
+                    epoch,
+                    0,
                 )?;
 
                 // Remove the validator's position from storage
                 validator_set_positions_handle()
-                    .at(&pipeline_epoch)
+                    .at(&epoch)
                     .remove(storage, validator)?;
 
                 // Promote the next below-cap validator if there is one
@@ -1327,14 +1320,14 @@ where
                     insert_validator_into_set(
                         &consensus_val_handle.at(&max_bc_amount),
                         storage,
-                        &pipeline_epoch,
+                        &epoch,
                         &removed_max_below_capacity,
                     )?;
                     validator_state_handle(&removed_max_below_capacity).set(
                         storage,
                         ValidatorState::Consensus,
-                        current_epoch,
-                        params.pipeline_len,
+                        epoch,
+                        0,
                     )?;
                 }
             } else if tokens_post < max_below_capacity_validator_amount {
@@ -1362,28 +1355,28 @@ where
                     &consensus_val_handle
                         .at(&max_below_capacity_validator_amount),
                     storage,
-                    &pipeline_epoch,
+                    &epoch,
                     &removed_max_below_capacity,
                 )?;
                 validator_state_handle(&removed_max_below_capacity).set(
                     storage,
                     ValidatorState::Consensus,
-                    current_epoch,
-                    params.pipeline_len,
+                    epoch,
+                    0,
                 )?;
 
                 // Insert the current validator into the below-capacity set
                 insert_validator_into_set(
                     &below_capacity_val_handle.at(&tokens_post.into()),
                     storage,
-                    &pipeline_epoch,
+                    &epoch,
                     validator,
                 )?;
                 validator_state_handle(validator).set(
                     storage,
                     ValidatorState::BelowCapacity,
-                    current_epoch,
-                    params.pipeline_len,
+                    epoch,
+                    0,
                 )?;
             } else {
                 tracing::debug!("Validator remains in consensus set");
@@ -1392,7 +1385,7 @@ where
                 insert_validator_into_set(
                     &consensus_val_handle.at(&tokens_post),
                     storage,
-                    &pipeline_epoch,
+                    &epoch,
                     validator,
                 )?;
             }
@@ -1427,7 +1420,7 @@ where
                     validator,
                     tokens_post,
                     min_consensus_validator_amount,
-                    current_epoch,
+                    epoch,
                     &consensus_val_handle,
                     &below_capacity_val_handle,
                 )?;
@@ -1437,14 +1430,14 @@ where
                 insert_validator_into_set(
                     &below_capacity_val_handle.at(&tokens_post.into()),
                     storage,
-                    &pipeline_epoch,
+                    &epoch,
                     validator,
                 )?;
                 validator_state_handle(validator).set(
                     storage,
                     ValidatorState::BelowCapacity,
-                    current_epoch,
-                    params.pipeline_len,
+                    epoch,
+                    0,
                 )?;
             } else {
                 // The current validator is demoted to the below-threshold set
@@ -1455,13 +1448,13 @@ where
                 validator_state_handle(validator).set(
                     storage,
                     ValidatorState::BelowThreshold,
-                    current_epoch,
-                    params.pipeline_len,
+                    epoch,
+                    0,
                 )?;
 
                 // Remove the validator's position from storage
                 validator_set_positions_handle()
-                    .at(&pipeline_epoch)
+                    .at(&epoch)
                     .remove(storage, validator)?;
             }
         }
@@ -1473,7 +1466,7 @@ where
 
         // Move the validator into the appropriate set
         let num_consensus_validators =
-            get_num_consensus_validators(storage, pipeline_epoch)?;
+            get_num_consensus_validators(storage, epoch)?;
         if num_consensus_validators < params.max_validator_slots {
             // Just insert into the consensus set
             tracing::debug!("Inserting validator into the consensus set");
@@ -1481,14 +1474,14 @@ where
             insert_validator_into_set(
                 &consensus_val_handle.at(&tokens_post),
                 storage,
-                &pipeline_epoch,
+                &epoch,
                 validator,
             )?;
             validator_state_handle(validator).set(
                 storage,
                 ValidatorState::Consensus,
-                current_epoch,
-                params.pipeline_len,
+                epoch,
+                0,
             )?;
         } else {
             let min_consensus_validator_amount =
@@ -1510,7 +1503,7 @@ where
                     validator,
                     tokens_post,
                     min_consensus_validator_amount,
-                    current_epoch,
+                    epoch,
                     &consensus_val_handle,
                     &below_capacity_val_handle,
                 )?;
@@ -1523,14 +1516,14 @@ where
                 insert_validator_into_set(
                     &below_capacity_val_handle.at(&tokens_post.into()),
                     storage,
-                    &pipeline_epoch,
+                    &epoch,
                     validator,
                 )?;
                 validator_state_handle(validator).set(
                     storage,
                     ValidatorState::BelowCapacity,
-                    current_epoch,
-                    params.pipeline_len,
+                    epoch,
+                    0,
                 )?;
             }
         }
@@ -1542,11 +1535,11 @@ where
 #[allow(clippy::too_many_arguments)]
 fn insert_into_consensus_and_demote_to_below_cap<S>(
     storage: &mut S,
-    params: &PosParams,
+    _params: &PosParams,
     validator: &Address,
     tokens_post: token::Amount,
     min_consensus_amount: token::Amount,
-    current_epoch: Epoch,
+    epoch: Epoch,
     consensus_set: &ConsensusValidatorSet,
     below_capacity_set: &BelowCapacityValidatorSet,
 ) -> storage_api::Result<()>
@@ -1562,35 +1555,35 @@ where
         .remove(storage, &last_position_of_min_consensus_vals)?
         .expect("There must be always be at least 1 consensus validator");
 
-    let pipeline_epoch = current_epoch + params.pipeline_len;
+    // let pipeline_epoch = current_epoch + params.pipeline_len;
 
     // Insert the min consensus validator into the below-capacity
     // set
     insert_validator_into_set(
         &below_capacity_set.at(&min_consensus_amount.into()),
         storage,
-        &pipeline_epoch,
+        &epoch,
         &removed_min_consensus,
     )?;
     validator_state_handle(&removed_min_consensus).set(
         storage,
         ValidatorState::BelowCapacity,
-        current_epoch,
-        params.pipeline_len,
+        epoch,
+        0,
     )?;
 
     // Insert the current validator into the consensus set
     insert_validator_into_set(
         &consensus_set.at(&tokens_post),
         storage,
-        &pipeline_epoch,
+        &epoch,
         validator,
     )?;
     validator_state_handle(validator).set(
         storage,
         ValidatorState::Consensus,
-        current_epoch,
-        params.pipeline_len,
+        epoch,
+        0,
     )?;
     Ok(())
 }
@@ -2094,7 +2087,7 @@ where
             &params,
             validator,
             -amount_after_slashing,
-            current_epoch,
+            pipeline_epoch,
         )?;
     }
 
@@ -2495,7 +2488,7 @@ where
             &params,
             validator,
             -amount_after_slashing,
-            current_epoch,
+            pipeline_epoch,
         )?;
     }
 
@@ -6322,7 +6315,7 @@ where
             &params,
             dest_validator,
             amount_after_slashing,
-            current_epoch,
+            pipeline_epoch,
         )?;
     }
 

@@ -928,7 +928,7 @@ pub async fn get_bond_amount_at<C: crate::ledger::queries::Client + Sync>(
     validator: &Address,
     epoch: Epoch,
 ) -> Option<token::Amount> {
-    let (_total, total_active) = unwrap_client_response::<C, (Amount, Amount)>(
+    let total_active = unwrap_client_response::<C, Amount>(
         RPC.vp()
             .pos()
             .bond_with_slashing(client, delegator, validator, &Some(epoch))

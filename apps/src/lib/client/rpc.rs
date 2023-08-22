@@ -1951,13 +1951,12 @@ pub async fn get_bond_amount_at<C: namada::ledger::queries::Client + Sync>(
     validator: &Address,
     epoch: Epoch,
 ) -> Option<token::Amount> {
-    let total_active =
-        unwrap_client_response::<C, (token::Amount, token::Amount)>(
-            RPC.vp()
-                .pos()
-                .bond_with_slashing(client, delegator, validator, &Some(epoch))
-                .await,
-        );
+    let total_active = unwrap_client_response::<C, token::Amount>(
+        RPC.vp()
+            .pos()
+            .bond_with_slashing(client, delegator, validator, &Some(epoch))
+            .await,
+    );
     Some(total_active)
 }
 

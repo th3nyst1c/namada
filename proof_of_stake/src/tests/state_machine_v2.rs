@@ -1096,7 +1096,7 @@ impl AbstractPosState {
                         .get_mut(&source)
                         .unwrap();
                     records.subtract_redelegation_slash(
-                        &validator,
+                        validator,
                         redelegation_start,
                         tokens,
                     );

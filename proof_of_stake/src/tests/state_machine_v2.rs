@@ -1067,16 +1067,16 @@ impl AbstractPosState {
                                     tokens.slashes += slashed;
                                     // Store the redelegation slashes to apply
                                     // on destination validator
-                                    redelegations_to_slash
+                                    *redelegations_to_slash
                                         .entry(dest.clone())
                                         .or_default()
                                         .entry(source.clone())
                                         .or_default()
-                                        .insert(
+                                        .entry(
                                             // start epoch of redelegation
                                             end.next(),
-                                            slashed,
-                                        );
+                                        )
+                                        .or_default() += slashed;
                                 }
                             }
                         }

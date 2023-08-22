@@ -3291,36 +3291,17 @@ impl ConcretePosState {
                     validator: validator.clone(),
                 };
                 for epoch in current_epoch.iter_range(params.pipeline_len) {
-                    let (conc_bond_amount_unslashed, conc_bond_amount) =
+                    let conc_bond_amount =
                         crate::bond_amount(&self.s, &bond_id, epoch).unwrap();
                     let ref_bond_amount = records.amount(epoch);
-                    let ref_bond_amount_unslashed =
-                        records.amount_before_slashing(epoch);
-                    let message = format!(
-                        "bond amount for {bond_id:?} in epoch {epoch} must \
-                         match reference state"
-                    );
                     assert_eq!(
                         ref_bond_amount,
                         conc_bond_amount,
-                        "Slashed {}. Expected {}, got {}",
-                        message,
+                        "Slashed bond amount for {bond_id:?} in epoch {epoch} \
+                         must match reference state. Expected {}, got {}",
                         ref_bond_amount.to_string_native(),
                         conc_bond_amount.to_string_native()
                     );
-
-                    // TODO: the unslashed amount from `bond_amount` is not
-                    // accurate because bonds that have been slashed before
-                    // being redelegated are slashed eagerly at redelegation
-
-                    // assert_eq!(
-                    //     ref_bond_amount_unslashed,
-                    //     conc_bond_amount_unslashed,
-                    //     "Unslashed {}. Expected {}, got {}",
-                    //     message,
-                    //     ref_bond_amount_unslashed.to_string_native(),
-                    //     conc_bond_amount_unslashed.to_string_native()
-                    // );
                 }
             }
         }

@@ -28,8 +28,6 @@ use crate::types::address::Address;
 use crate::types::storage::Epoch;
 use crate::types::token;
 
-type AmountPair = (token::Amount, token::Amount);
-
 // PoS validity predicate queries
 router! {POS,
     ( "validator" ) = {
@@ -79,7 +77,7 @@ router! {POS,
         -> token::Amount = bond,
 
     ( "bond_with_slashing" / [source: Address] / [validator: Address] / [epoch: opt Epoch] )
-        -> AmountPair = bond_with_slashing,
+        -> token::Amount = bond_with_slashing,
 
     ( "unbond" / [source: Address] / [validator: Address] )
         -> HashMap<(Epoch, Epoch), token::Amount> = unbond,
@@ -348,7 +346,7 @@ fn bond_with_slashing<D, H>(
     source: Address,
     validator: Address,
     epoch: Option<Epoch>,
-) -> storage_api::Result<AmountPair>
+) -> storage_api::Result<token::Amount>
 where
     D: 'static + DB + for<'iter> DBIter<'iter> + Sync,
     H: 'static + StorageHasher + Sync,

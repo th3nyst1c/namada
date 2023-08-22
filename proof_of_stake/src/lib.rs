@@ -3668,15 +3668,13 @@ where
 }
 
 /// Get the total bond amount, including slashes, for a given bond ID and epoch.
-/// Returns a two-element tuple of the raw bond amount and the post-slashed bond
-/// amount, respectively.
-///
-/// TODO: does epoch of discovery need to be considered for precise accuracy?
+/// Returns the post-slashed bond amount. For future epochs the value is subject
+/// to change.
 pub fn bond_amount<S>(
     storage: &S,
     bond_id: &BondId,
     epoch: Epoch,
-) -> storage_api::Result<(token::Amount, token::Amount)>
+) -> storage_api::Result<token::Amount>
 where
     S: StorageRead,
 {
@@ -3695,7 +3693,6 @@ where
 
     let bonds =
         bond_handle(&bond_id.source, &bond_id.validator).get_data_handler();
-    let mut total = token::Amount::default();
     let mut total_active = token::Amount::default();
     for next in bonds.iter(storage)? {
         let (bond_epoch, delta) = next?;
@@ -3703,7 +3700,6 @@ where
             continue;
         }
 
-        total += token::Amount::from(delta);
         total_active += token::Amount::from(delta);
 
         for (&slash_epoch, &rate) in &slash_rates {
@@ -3732,7 +3728,6 @@ where
             + params.pipeline_len;
 
         if start <= epoch && end > epoch {
-            total += delta;
             total_active += delta;
 
             for (&slash_epoch, &rate) in &slash_rates {
@@ -3747,11 +3742,11 @@ where
         }
     }
 
-    // Add outgoing redelegations that are still contributing to stake
     if bond_id.validator != bond_id.source {
+        // Add outgoing redelegations that are still contributing to the source
+        // validator's stake
         let redelegated_bonds =
             delegator_redelegated_bonds_handle(&bond_id.source);
-
         for res in redelegated_bonds.iter(storage)? {
             let (
                 NestedSubKey::Data {
@@ -3772,7 +3767,6 @@ where
                 && start <= epoch
                 && end > epoch
             {
-                total += token::Amount::from(delta);
                 total_active += token::Amount::from(delta);
 
                 for (&slash_epoch, &rate) in &slash_rates {
@@ -3822,7 +3816,6 @@ where
                 // ... and the end after this epoch
                 && end > epoch
             {
-                total += token::Amount::from(delta);
                 total_active += token::Amount::from(delta);
 
                 for (&slash_epoch, &rate) in &slash_rates {
@@ -3837,7 +3830,7 @@ where
         }
     }
 
-    Ok((total, total_active))
+    Ok(total_active)
 }
 
 /// Get the genesis consensus validators stake and consensus key for Tendermint,

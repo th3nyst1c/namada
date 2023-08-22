@@ -1951,7 +1951,7 @@ pub async fn get_bond_amount_at<C: namada::ledger::queries::Client + Sync>(
     validator: &Address,
     epoch: Epoch,
 ) -> Option<token::Amount> {
-    let (_total, total_active) =
+    let total_active =
         unwrap_client_response::<C, (token::Amount, token::Amount)>(
             RPC.vp()
                 .pos()

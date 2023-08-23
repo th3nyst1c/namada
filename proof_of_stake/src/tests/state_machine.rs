@@ -53,7 +53,7 @@ prop_state_machine! {
     })]
     #[test]
     /// A `StateMachineTest` implemented on `PosState`
-    fn pos_state_machine_test(sequential 200 => ConcretePosState);
+    fn pos_state_machine_test(sequential 500 => ConcretePosState);
 }
 
 type AbstractDelegatorRedelegatedBonded = BTreeMap<
@@ -1959,7 +1959,11 @@ impl ReferenceStateMachine for AbstractPosState {
 
                     // Validator sets need to be updated first!!
                     if *pipeline_state != ValidatorState::Jailed {
-                        state.update_validator_sets(&id.validator, change);
+                        state.update_validator_sets(
+                            state.pipeline(),
+                            &id.validator,
+                            change,
+                        );
                     }
                     state.update_bond(id, change);
                     state.update_validator_total_stake(&id.validator, change);
@@ -2054,6 +2058,7 @@ impl ReferenceStateMachine for AbstractPosState {
                         change,
                     );
                 }
+                state.debug_validators();
             }
             Transition::Misbehavior {
                 address,
@@ -2946,7 +2951,11 @@ impl AbstractPosState {
         // let token_change = cmp::min(*pipeline_stake, amount_after_slashing);
 
         if *pipeline_state != ValidatorState::Jailed {
-            self.update_validator_sets(&id.validator, -amount_after_slashing);
+            self.update_validator_sets(
+                self.pipeline(),
+                &id.validator,
+                -amount_after_slashing,
+            );
         }
         self.update_validator_total_stake(
             &id.validator,
@@ -3161,7 +3170,11 @@ impl AbstractPosState {
             .unwrap();
 
         if *pipeline_state != ValidatorState::Jailed {
-            self.update_validator_sets(&id.validator, -amount_after_slashing);
+            self.update_validator_sets(
+                self.pipeline(),
+                &id.validator,
+                -amount_after_slashing,
+            );
         }
         self.update_validator_total_stake(
             &id.validator,
@@ -3242,7 +3255,11 @@ impl AbstractPosState {
             .unwrap();
 
         if *pipeline_state != ValidatorState::Jailed {
-            self.update_validator_sets(new_validator, amount_after_slashing);
+            self.update_validator_sets(
+                self.pipeline(),
+                new_validator,
+                amount_after_slashing,
+            );
         }
         self.update_validator_total_stake(new_validator, amount_after_slashing);
     }
@@ -3266,19 +3283,22 @@ impl AbstractPosState {
     /// Update validator in sets with bonded or unbonded change
     fn update_validator_sets(
         &mut self,
+        epoch: Epoch,
         validator: &Address,
         change: token::Change,
     ) {
-        let pipeline = self.pipeline();
-        let consensus_set = self.consensus_set.entry(pipeline).or_default();
-        let below_cap_set =
-            self.below_capacity_set.entry(pipeline).or_default();
+        println!(
+            "\nUpdating set for validator {} in epoch {} with amount {}\n",
+            validator, epoch, change
+        );
+        // let pipeline = self.pipeline();
+        let consensus_set = self.consensus_set.entry(epoch).or_default();
+        let below_cap_set = self.below_capacity_set.entry(epoch).or_default();
         let below_thresh_set =
-            self.below_threshold_set.entry(pipeline).or_default();
+            self.below_threshold_set.entry(epoch).or_default();
 
-        let validator_stakes = self.validator_stakes.get(&pipeline).unwrap();
-        let validator_states =
-            self.validator_states.get_mut(&pipeline).unwrap();
+        let validator_stakes = self.validator_stakes.get(&epoch).unwrap();
+        let validator_states = self.validator_states.get_mut(&epoch).unwrap();
 
         let state_pre = validator_states.get(validator).unwrap();
 
@@ -3577,7 +3597,18 @@ impl AbstractPosState {
         }
 
         for (validator, slash_amounts) in dbg!(map_validator_slash) {
+            // Current epoch
             let delta_cur = *slash_amounts.get(&self.epoch).unwrap();
+
+            let cur_state = self
+                .validator_states
+                .get(&self.epoch)
+                .unwrap()
+                .get(&validator)
+                .unwrap();
+            if *cur_state != ValidatorState::Jailed {
+                self.update_validator_sets(self.epoch, &validator, -delta_cur);
+            }
 
             let cur_stake = self
                 .validator_stakes
@@ -3587,7 +3618,20 @@ impl AbstractPosState {
                 .or_default();
             *cur_stake -= delta_cur;
 
+            // Next epoch
             let delta_next = *slash_amounts.get(&self.epoch.next()).unwrap();
+
+            let next_state = self
+                .validator_states
+                .get(&self.epoch.next())
+                .unwrap()
+                .get(&validator)
+                .cloned()
+                .unwrap();
+            let next_epoch = self.epoch.next();
+            if next_state != ValidatorState::Jailed {
+                self.update_validator_sets(next_epoch, &validator, -delta_next);
+            }
 
             let next_stake = self
                 .validator_stakes
@@ -3597,6 +3641,23 @@ impl AbstractPosState {
                 .or_default();
             *next_stake -= delta_next;
 
+            // Pipeline epoch
+            let pipeline_state = self
+                .validator_states
+                .get(&self.pipeline())
+                .unwrap()
+                .get(&validator)
+                .cloned()
+                .unwrap();
+            let pipeline_epoch = self.pipeline();
+            if pipeline_state != ValidatorState::Jailed {
+                self.update_validator_sets(
+                    pipeline_epoch,
+                    &validator,
+                    -delta_next,
+                );
+            }
+
             let pipeline_stake = self
                 .validator_stakes
                 .entry(self.pipeline())
@@ -3604,6 +3665,8 @@ impl AbstractPosState {
                 .entry(validator.clone())
                 .or_default();
             *pipeline_stake -= delta_next;
+
+            debug_assert_eq!(next_state, pipeline_state);
         }
     }
 

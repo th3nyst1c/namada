@@ -5007,22 +5007,56 @@ where
 
     // Update the validator stakes
     // TODO: need to generalize for arbitrary pipeline_len!!
+    println!("UPDATING stakes for slashed validators");
+
+    dbg!(&map_validator_slash);
+
+    // First transform the `map_validator_slash` info to be compatible with the
+    // deltas formulation
+    // TODO: check carefully if this is correct!
+    for (_validator, slash_amounts) in map_validator_slash.iter_mut() {
+        let epochs = slash_amounts.keys().cloned().collect::<Vec<_>>();
+        for epoch in epochs {
+            let delta = slash_amounts.get(&epoch).cloned().unwrap();
+            for (sa_epoch, sa_amt) in &mut *slash_amounts {
+                if *sa_epoch > epoch {
+                    *sa_amt -= delta;
+                }
+            }
+        }
+    }
+
+    dbg!(&map_validator_slash);
+
+    // IMPORTANT NOTE: due to https://github.com/anoma/namada/issues/1829, going to shift the slashing to one epoch in the future!!
     for (validator, slash_amounts) in map_validator_slash {
         // Use the `slash_amounts` to deduct from the deltas for the current and
         // the next epochs (no adjusting at pipeline)
+        println!("Slashing validator {}", validator);
+        dbg!(&slash_amounts);
 
-        let next_stake_pre = read_validator_stake(
-            storage,
-            &params,
-            &validator,
-            current_epoch.next(),
-        )?
-        .unwrap_or_default()
-        .change();
         let delta_cur = slash_amounts
             .get(&current_epoch)
             .cloned()
             .unwrap_or_default();
+        println!("delta cur = {}", delta_cur);
+
+        // If the validator is not jailed (holding slashed redelegated tokens),
+        // need to update the validator set
+        let state = validator_state_handle(&validator)
+            .get(storage, current_epoch, &params)?
+            .unwrap();
+        println!("Current state: {:?}", state);
+        if state != ValidatorState::Jailed {
+            update_validator_set(
+                storage,
+                &params,
+                &validator,
+                -delta_cur,
+                current_epoch,
+            )?;
+        }
+
         update_validator_deltas(
             storage,
             &validator,
@@ -5032,22 +5066,48 @@ where
         )?;
         update_total_deltas(storage, -delta_cur, current_epoch, 0)?;
 
-        let next_stake_post = next_stake_pre
-            - slash_amounts
-                .get(&current_epoch.next())
-                .cloned()
-                .unwrap_or_default();
+        // let next_stake_pre = read_validator_stake(
+        //     storage,
+        //     &params,
+        //     &validator,
+        //     current_epoch.next(),
+        // )?
+        // .unwrap_or_default()
+        // .change();
+        let delta_next = slash_amounts
+            .get(&current_epoch.next())
+            .cloned()
+            .unwrap_or_default();
 
         // This now accounts for the first slash
-        let next_stake_read = read_validator_stake(
-            storage,
-            &params,
-            &validator,
-            current_epoch.next(),
-        )?
-        .unwrap_or_default()
-        .change();
-        let delta_next = next_stake_post - next_stake_read;
+
+        // let next_stake_read = read_validator_stake(
+        //     storage,
+        //     &params,
+        //     &validator,
+        //     current_epoch.next(),
+        // )?
+        // .unwrap_or_default()
+        // .change();
+        // let delta_next = next_stake_post - next_stake_read;
+        println!("delta next = {}", delta_next);
+
+        // If the validator is not jailed (holding slashed redelegated tokens),
+        // need to update the validator set
+        let state = validator_state_handle(&validator)
+            .get(storage, current_epoch.next(), &params)?
+            .unwrap();
+        println!("Next state: {:?}", state);
+
+        if state != ValidatorState::Jailed {
+            update_validator_set(
+                storage,
+                &params,
+                &validator,
+                -delta_next,
+                current_epoch.next(),
+            )?;
+        }
 
         update_validator_deltas(
             storage,
@@ -5378,18 +5438,16 @@ where
                 &total_unbonded.at(&epoch),
                 &total_redelegated_unbonded.at(&epoch),
             )?;
-        let updated_bonds_balance = dbg!(init_bond_balance)
-            + dbg!(
-                total_bonded
-                    .get_delta_val(storage, epoch)?
-                    .unwrap_or_default()
-            )
-            - dbg!(compute_recent_total_unbonded(
+        let updated_bonds_balance = init_bond_balance
+            + total_bonded
+                .get_delta_val(storage, epoch)?
+                .unwrap_or_default()
+            - compute_recent_total_unbonded(
                 storage,
                 infraction_epoch,
                 &total_unbonded.at(&epoch),
                 &total_redelegated_unbonded.at(&epoch),
-            ))?;
+            )?;
         compute_redelegated_bonds_balance(
             storage,
             params,

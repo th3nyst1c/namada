@@ -2292,12 +2292,12 @@ where
     }
 
     // `newRedelegatedUnbonds`
-    println!("\nDEBUGGING REDELEGATED UNBONDS\n");
-    dbg!(
-        &redelegated_bonds.collect_map(storage)?,
-        &bonds_to_unbond.epochs,
-        &modified_redelegation
-    );
+    // println!("\nDEBUGGING REDELEGATED UNBONDS\n");
+    // dbg!(
+    //     &redelegated_bonds.collect_map(storage)?,
+    //     &bonds_to_unbond.epochs,
+    //     &modified_redelegation
+    // );
     // This is what the delegator's redelegated unbonds would look like if this
     // was the only unbond in the PoS system. We need to add these redelegated
     // unbonds to the existing redelegated unbonds
@@ -2307,25 +2307,25 @@ where
         &bonds_to_unbond.epochs,
         &modified_redelegation,
     )?;
-    dbg!(&new_redelegated_unbonds);
+    // dbg!(&new_redelegated_unbonds);
 
     // `updatedRedelegatedBonded`
     // NOTE: for now put this here after redelegated unbonds calc bc that one
     // uses the pre-modified redelegated bonds from storage!
     if let Some(epoch) = modified_redelegation.epoch {
         println!("\nIs modified redelegation");
-        dbg!(&modified_redelegation);
+        // dbg!(&modified_redelegation);
         // First remove redelegation entries corresponding the outer epoch key
         for epoch_to_remove in &bonds_to_unbond.epochs {
             redelegated_bonds.remove_all(storage, epoch_to_remove)?;
         }
         // Then updated the redelegated bonds at this epoch
         let rbonds = redelegated_bonds.at(&epoch);
-        let pre = rbonds.collect_map(storage)?;
-        dbg!(&pre);
+        // let pre = rbonds.collect_map(storage)?;
+        // dbg!(&pre);
         update_redelegated_bonds(storage, &rbonds, &modified_redelegation)?;
-        let post = rbonds.collect_map(storage)?;
-        dbg!(&post);
+        // let post = rbonds.collect_map(storage)?;
+        // dbg!(&post);
     } else {
         // Need to remove redelegation entries corresponding the outer epoch key
         for epoch_to_remove in &bonds_to_unbond.epochs {
@@ -5010,11 +5010,13 @@ where
     println!("UPDATING stakes for slashed validators");
 
     dbg!(&map_validator_slash);
+    let mut map_validator_slash_for_deltas = map_validator_slash.clone();
 
     // First transform the `map_validator_slash` info to be compatible with the
     // deltas formulation
     // TODO: check carefully if this is correct!
-    for (_validator, slash_amounts) in map_validator_slash.iter_mut() {
+    for (_validator, slash_amounts) in map_validator_slash_for_deltas.iter_mut()
+    {
         let epochs = slash_amounts.keys().cloned().collect::<Vec<_>>();
         for epoch in epochs {
             let delta = slash_amounts.get(&epoch).cloned().unwrap();
@@ -5029,7 +5031,7 @@ where
     dbg!(&map_validator_slash);
 
     // IMPORTANT NOTE: due to https://github.com/anoma/namada/issues/1829, going to shift the slashing to one epoch in the future!!
-    for (validator, slash_amounts) in map_validator_slash {
+    for (validator, slash_amounts) in map_validator_slash_for_deltas {
         // Use the `slash_amounts` to deduct from the deltas for the current and
         // the next epochs (no adjusting at pipeline)
         println!("Slashing validator {}", validator);
@@ -5047,12 +5049,18 @@ where
             .get(storage, current_epoch, &params)?
             .unwrap();
         println!("Current state: {:?}", state);
+        let delta_cur_val_set = map_validator_slash
+            .get(&validator)
+            .unwrap()
+            .get(&current_epoch)
+            .cloned()
+            .unwrap();
         if state != ValidatorState::Jailed {
             update_validator_set(
                 storage,
                 &params,
                 &validator,
-                -delta_cur,
+                -delta_cur_val_set,
                 current_epoch,
             )?;
         }
@@ -5098,13 +5106,18 @@ where
             .get(storage, current_epoch.next(), &params)?
             .unwrap();
         println!("Next state: {:?}", state);
-
+        let delta_next_val_set = map_validator_slash
+            .get(&validator)
+            .unwrap()
+            .get(&current_epoch.next())
+            .cloned()
+            .unwrap();
         if state != ValidatorState::Jailed {
             update_validator_set(
                 storage,
                 &params,
                 &validator,
-                -delta_next,
+                -delta_next_val_set,
                 current_epoch.next(),
             )?;
         }
@@ -5208,9 +5221,11 @@ fn slash_validator_redelegation<S>(
 where
     S: StorageRead,
 {
+    println!("\nSLASHING VAL REDELEGATIONS\n");
     let infraction_epoch =
         current_epoch - params.slash_processing_epoch_offset();
 
+    println!("OUTGOING REDELEGATIONS:");
     for res in outgoing_redelegations.iter(storage)? {
         let (
             NestedSubKey::Data {
@@ -5219,6 +5234,7 @@ where
             },
             amount,
         ) = res?;
+        println!("bond_start = {}, redel_start = {}", bond_start, redel_start);
         if params.in_redelegation_slashing_window(
             infraction_epoch,
             redel_start,
@@ -5261,6 +5277,12 @@ fn slash_redelegation<S>(
 where
     S: StorageRead,
 {
+    println!(
+        "\nSLASH REDELEGATION OF BOND START {bond_start} and redel_bond_start \
+         {redel_bond_start}\n"
+    );
+    dbg!(&slashes.iter(storage)?.collect::<Vec<_>>());
+
     let infraction_epoch =
         current_epoch - params.slash_processing_epoch_offset();
 
@@ -5293,7 +5315,10 @@ where
                 }
             });
 
+    println!("init_tot_unbonded = {}", init_tot_unbonded);
+
     for epoch in Epoch::iter_range(current_epoch, params.pipeline_len) {
+        println!("\nEpoch: {}", epoch);
         let updated_total_unbonded = if !has_redelegation(
             storage,
             &total_redelegated_unbonded.at(&epoch),
@@ -5312,6 +5337,7 @@ where
                     .unwrap()
                     .unwrap_or_default()
         };
+        println!("updated_total_unbonded = {}", updated_total_unbonded);
         let list_slashes = slashes
             .iter(storage)?
             .map(Result::unwrap)
@@ -5327,18 +5353,20 @@ where
                         < infraction_epoch
             })
             .collect::<Vec<_>>();
-
+        dbg!(&list_slashes);
         let slashed = apply_list_slashes(
             params,
             &list_slashes,
             amount - updated_total_unbonded,
         )
         .mul_ceil(slash_rate);
+        println!("slashed = {}", slashed.to_string_native());
 
         let list_slashes = slashes
             .iter(storage)?
             .map(Result::unwrap)
             .filter(|slash| {
+                dbg!(&slash);
                 // TODO: check bounds!!
                 params.in_redelegation_slashing_window(
                     slash.epoch,
@@ -5347,6 +5375,8 @@ where
                 ) && bond_start <= slash.epoch
             })
             .collect::<Vec<_>>();
+        dbg!(&list_slashes);
+        dbg!(&slash_rate);
 
         let slashable_stake = apply_list_slashes(
             params,
@@ -5354,11 +5384,14 @@ where
             amount - updated_total_unbonded,
         )
         .mul_ceil(slash_rate);
+        println!("slashable stake = {}", slashable_stake.to_string_native());
 
         init_tot_unbonded = updated_total_unbonded;
         let map_value = slashed_amounts.entry(epoch).or_default();
+        dbg!(&map_value);
         *map_value += cmp::min(slashed, slashable_stake).change();
     }
+    dbg!(&slashed_amounts);
 
     Ok(())
 }

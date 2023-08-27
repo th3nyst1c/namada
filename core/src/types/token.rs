@@ -257,7 +257,7 @@ impl Amount {
         let denom = Uint::from(10u64.pow(POS_DECIMAL_PRECISION as u32));
         let floor_div = tot / denom;
         let rem = tot % denom;
-        dbg!(tot, denom, floor_div, rem);
+        // dbg!(tot, denom, floor_div, rem);
         let raw = if !rem.is_zero() {
             floor_div + Self::from(1_u64)
         } else {

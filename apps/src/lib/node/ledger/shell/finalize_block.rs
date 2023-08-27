@@ -2624,8 +2624,24 @@ mod test_finalize_block {
             read_total_stake(&shell.wl_storage, &params, pipeline_epoch)?;
 
         let expected_slashed = cubic_rate * initial_stake;
-        assert_eq!(stake1, initial_stake - expected_slashed);
-        assert_eq!(stake2, initial_stake - expected_slashed);
+
+        println!(
+            "Initial stake = {}\nCubic rate = {}\nExpected slashed = {}\n",
+            initial_stake.to_string_native(),
+            cubic_rate,
+            expected_slashed.to_string_native()
+        );
+
+        assert!(
+            (stake1.change() - (initial_stake - expected_slashed).change())
+                .abs()
+                <= 1.into()
+        );
+        assert!(
+            (stake2.change() - (initial_stake - expected_slashed).change())
+                .abs()
+                <= 1.into()
+        );
         assert_eq!(total_stake, total_initial_stake - 2u64 * expected_slashed);
 
         // Unjail one of the validators

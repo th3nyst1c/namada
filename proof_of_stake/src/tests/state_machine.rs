@@ -2822,6 +2822,8 @@ impl AbstractPosState {
             .or_default()
             .entry(pipeline_epoch)
             .or_default();
+        let total_bonded =
+            self.total_bonded.entry(id.validator.clone()).or_default();
         // let unbonds = self
         //     .unbonds
         //     .entry(withdraw_epoch)
@@ -2839,6 +2841,10 @@ impl AbstractPosState {
             .delegator_redelegated_unbonded
             .entry(id.source.clone())
             .or_default()
+            .entry(id.validator.clone())
+            .or_default();
+        let validator_total_redelegated_bonded = self
+            .validator_total_redelegated_bonded
             .entry(id.validator.clone())
             .or_default();
         let validator_total_redelegated_unbonded = self
@@ -3051,17 +3057,29 @@ impl AbstractPosState {
             }
         }
 
-        // Update the validator's total unbonded
+        // Update the validator's total bonded and total unbonded
         for ((start_epoch, _), unbonded) in &new_unbonds {
+            let cur_total_bonded =
+                total_bonded.entry(*start_epoch).or_default();
+            *cur_total_bonded -= *unbonded;
             let cur_total_unbonded =
                 total_unbonded.entry(*start_epoch).or_default();
             *cur_total_unbonded += token::Amount::from(*unbonded);
         }
 
-        // Update the validator's total redelegated unbonded
+        // Update the validator's total redelegated bonded and unbonded
         for (dest_start, r_unbonds) in &new_redelegated_unbonds {
             for (src_val, changes) in r_unbonds {
                 for (bond_start, change) in changes {
+                    let cur_total_bonded = validator_total_redelegated_bonded
+                        .entry(*dest_start)
+                        .or_default()
+                        .entry(src_val.clone())
+                        .or_default()
+                        .entry(*bond_start)
+                        .or_default();
+                    *cur_total_bonded -= token::Amount::from(*change);
+
                     let cur_total_unbonded =
                         validator_total_redelegated_unbonded
                             .entry(*dest_start)
@@ -3127,17 +3145,24 @@ impl AbstractPosState {
             + self.params.unbonding_len
             + self.params.cubic_slashing_window_length;
         let bonds = self.bonds.entry(id.clone()).or_default();
-        let total_unbonded = self
+        let src_total_unbonded = self
             .total_unbonded
             .entry(id.validator.clone())
             .or_default()
             .entry(pipeline_epoch)
             .or_default();
+        let src_total_bonded =
+            self.total_bonded.entry(id.validator.clone()).or_default();
 
         let delegator_redelegated_bonds = self
             .delegator_redelegated_bonded
             .entry(id.source.clone())
             .or_default()
+            .entry(id.validator.clone())
+            .or_default();
+
+        let src_validator_total_redelegated_bonded = self
+            .validator_total_redelegated_bonded
             .entry(id.validator.clone())
             .or_default();
 
@@ -3294,9 +3319,30 @@ impl AbstractPosState {
 
         // Update the validator's total unbonded
         for ((start_epoch, _), unbonded) in &new_unbonds {
+            let cur_total_bonded =
+                src_total_bonded.entry(*start_epoch).or_default();
+            *cur_total_bonded -= *unbonded;
+
             let cur_total_unbonded =
-                total_unbonded.entry(*start_epoch).or_default();
+                src_total_unbonded.entry(*start_epoch).or_default();
             *cur_total_unbonded += token::Amount::from(*unbonded);
+        }
+
+        // Update the src validator's total redelegated bonded
+        for (dest_start, r_unbonds) in &new_redelegated_unbonds {
+            for (src_val, changes) in r_unbonds {
+                for (bond_start, change) in changes {
+                    let cur_total_redel_bonded =
+                        src_validator_total_redelegated_bonded
+                            .entry(*dest_start)
+                            .or_default()
+                            .entry(src_val.clone())
+                            .or_default()
+                            .entry(*bond_start)
+                            .or_default();
+                    *cur_total_redel_bonded -= token::Amount::from(*change);
+                }
+            }
         }
 
         // NOTE: DO NOT UPDATE THE VALIDATOR'S TOTAL REDELEGATED UNBONDED
@@ -3375,6 +3421,15 @@ impl AbstractPosState {
                 .or_default();
             *cur_outgoing += *bonded;
         }
+
+        // Update the dest validator's total bonded
+        let dest_total_bonded = self
+            .total_bonded
+            .entry(new_validator.clone())
+            .or_default()
+            .entry(pipeline_epoch)
+            .or_default();
+        *dest_total_bonded += amount_after_slashing;
 
         // Update the dest validator's total redelegated bonded
         let total_redelegated_bonded = self
@@ -3903,18 +3958,6 @@ impl AbstractPosState {
             .cloned()
             .unwrap_or_default();
 
-        let total_bonded = self
-            .total_bonded
-            .get(validator)
-            .cloned()
-            .unwrap_or_default();
-
-        let total_redelegated_bonded = self
-            .validator_total_redelegated_bonded
-            .get(validator)
-            .cloned()
-            .unwrap_or_default();
-
         let total_unbonded = self
             .total_unbonded
             .get(validator)
@@ -3926,358 +3969,518 @@ impl AbstractPosState {
             .cloned()
             .unwrap_or_default();
 
-        let mut init_total_unbonded = token::Change::zero();
-        let mut init_bond_balance = token::Change::zero();
-        let mut init_redelegated_bond_balance =
-            BTreeMap::<Epoch, token::Change>::new();
+        // `val bonds`
+        let mut total_bonded = self
+            .total_bonded
+            .get(validator)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&(epoch, _amount)| epoch <= infraction_epoch)
+            .collect::<BTreeMap<_, _>>();
 
-        for epoch in Epoch::iter_bounds_inclusive(
-            infraction_epoch.next(),
-            self.epoch.prev(),
-        ) {
-            init_total_unbonded += self.compute_total_unbonded(
-                validator,
-                infraction_epoch,
-                &total_unbonded.get(&epoch).cloned().unwrap_or_default(),
-                &total_redelegated_unbonded
-                    .get(&epoch)
+        // `val redelegatedBonds`
+        let mut total_redelegated_bonded = total_bonded
+            .keys()
+            .filter(|&epoch| {
+                self.validator_total_redelegated_bonded
+                    .get(validator)
                     .cloned()
-                    .unwrap_or_default(),
-            );
-
-            let bond_amount =
-                total_bonded.get(&epoch).cloned().unwrap_or_default();
-            init_bond_balance += bond_amount
-                - Self::compute_recent_total_unbonded(
-                    infraction_epoch,
-                    &total_unbonded.get(&epoch).cloned().unwrap_or_default(),
-                    &total_redelegated_unbonded
-                        .get(&epoch)
+                    .unwrap_or_default()
+                    .contains_key(epoch)
+            })
+            .map(|epoch| {
+                (
+                    *epoch,
+                    self.validator_total_redelegated_bonded
+                        .get(validator)
+                        .unwrap()
+                        .get(epoch)
                         .cloned()
-                        .unwrap_or_default(),
-                );
-
-            self.compute_redelegated_bonds_balance(
-                epoch,
-                &total_redelegated_bonded
-                    .get(&epoch)
-                    .cloned()
-                    .unwrap_or_default(),
-                &total_redelegated_unbonded,
-                &mut init_redelegated_bond_balance,
-            );
-        }
+                        .unwrap(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
 
         let mut slashed_amounts = val_slash_amounts.clone();
+        let mut sum = token::Amount::zero();
 
-        for epoch in Epoch::iter_range(self.epoch, self.params.pipeline_len + 1)
-        {
-            let updated_total_unbonded = init_total_unbonded
-                + self.compute_total_unbonded(
-                    validator,
-                    infraction_epoch,
-                    &total_unbonded.get(&epoch).cloned().unwrap_or_default(),
-                    &total_redelegated_unbonded
-                        .get(&epoch)
+        // NEW ---------------------------------
+        let eps = self
+            .epoch
+            .iter_range(self.params.pipeline_len)
+            .collect::<Vec<_>>();
+        for epoch in eps.into_iter().rev() {
+            let amount = total_bonded.iter().fold(
+                token::Change::zero(),
+                |acc, (bond_start, bond_amount)| {
+                    let redel_bonds = total_redelegated_bonded
+                        .get(bond_start)
                         .cloned()
-                        .unwrap_or_default(),
-                );
-            let updated_bonds_balance = init_bond_balance
-                + total_bonded.get(&epoch).cloned().unwrap_or_default()
-                - Self::compute_recent_total_unbonded(
-                    infraction_epoch,
-                    &total_unbonded.get(&epoch).cloned().unwrap_or_default(),
-                    &total_redelegated_unbonded
-                        .get(&epoch)
-                        .cloned()
-                        .unwrap_or_default(),
-                );
-
-            self.compute_redelegated_bonds_balance(
-                epoch,
-                &total_redelegated_bonded
-                    .get(&epoch)
-                    .cloned()
-                    .unwrap_or_default(),
-                &total_redelegated_unbonded,
-                &mut init_redelegated_bond_balance,
+                        .unwrap_or_default();
+                    acc + self.compute_slash_bond_at_epoch(
+                        epoch,
+                        infraction_epoch,
+                        *bond_start,
+                        token::Amount::from(*bond_amount),
+                        &redel_bonds,
+                        slash_rate,
+                        validator,
+                    )
+                },
             );
-
-            let slashed_amount = (infraction_stake - updated_total_unbonded)
-                .mul_ceil(slash_rate);
-            let current_stake = self
-                .validator_stakes
+            let new_bonds = total_unbonded
                 .get(&epoch)
-                .unwrap()
-                .get(validator)
                 .cloned()
                 .unwrap_or_default()
-                - slashed_amounts.get(&epoch).cloned().unwrap_or_default();
+                .into_iter()
+                .filter(|(ep, _)| *ep <= infraction_epoch)
+                .map(|(ep, amount)| (ep, amount.change()))
+                .collect::<BTreeMap<_, _>>();
+            let new_redelegated_bonds = new_bonds
+                .keys()
+                .filter(|&ep| {
+                    total_redelegated_unbonded
+                        .get(&epoch)
+                        .cloned()
+                        .unwrap_or_default()
+                        .contains_key(ep)
+                })
+                .map(|ep| {
+                    (
+                        *ep,
+                        total_redelegated_unbonded
+                            .get(&epoch)
+                            .unwrap()
+                            .get(ep)
+                            .cloned()
+                            .unwrap(),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
 
-            let slashable_stake = current_stake
-                - updated_bonds_balance
-                - init_redelegated_bond_balance
-                    .get(&epoch)
-                    .cloned()
-                    .unwrap_or_default();
+            total_bonded = new_bonds;
+            total_redelegated_bonded = new_redelegated_bonds;
+            sum += token::Amount::from(amount);
 
-            let cur_amount = slashed_amounts.entry(epoch).or_default();
-            *cur_amount += cmp::min(slashed_amount, slashable_stake);
-
-            init_total_unbonded = updated_total_unbonded;
-            init_bond_balance = updated_bonds_balance;
+            let cur = slashed_amounts.entry(epoch).or_default();
+            *cur += sum.change();
         }
 
         slashed_amounts
+
+        // let mut init_total_unbonded = token::Change::zero();
+        // let mut init_bond_balance = token::Change::zero();
+        // let mut init_redelegated_bond_balance =
+        //     BTreeMap::<Epoch, token::Change>::new();
+
+        // for epoch in Epoch::iter_bounds_inclusive(
+        //     infraction_epoch.next(),
+        //     self.epoch.prev(),
+        // ) {
+        //     println!("\nInit epoch {}", epoch);
+
+        //     init_total_unbonded += self.compute_total_unbonded(
+        //         validator,
+        //         infraction_epoch,
+        //         &total_unbonded.get(&epoch).cloned().unwrap_or_default(),
+        //         &total_redelegated_unbonded
+        //             .get(&epoch)
+        //             .cloned()
+        //             .unwrap_or_default(),
+        //     );
+
+        //     let bond_amount =
+        //         total_bonded.get(&epoch).cloned().unwrap_or_default();
+        //     dbg!(&bond_amount);
+        //     init_bond_balance += bond_amount
+        //         - Self::compute_recent_total_unbonded( infraction_epoch,
+        //           &total_unbonded.get(&epoch).cloned().unwrap_or_default(),
+        //           &total_redelegated_unbonded .get(&epoch) .cloned()
+        //           .unwrap_or_default(),
+        //         );
+        //     dbg!(&init_bond_balance);
+
+        //     self.compute_redelegated_bonds_balance(
+        //         epoch,
+        //         &total_redelegated_bonded
+        //             .get(&epoch)
+        //             .cloned()
+        //             .unwrap_or_default(),
+        //         &total_redelegated_unbonded,
+        //         &mut init_redelegated_bond_balance,
+        //     );
+        // }
+
+        // let mut slashed_amounts = val_slash_amounts.clone();
+        // dbg!(&slashed_amounts);
+
+        // println!(
+        //     "CUR INIT TOTAL UNBONDED = {}",
+        //     init_total_unbonded.to_string_native()
+        // );
+        // println!(
+        //     "CUR INIT BOND BALANCE = {}",
+        //     init_bond_balance.to_string_native()
+        // );
+        // println!(
+        //     "CUR INIT REDELEGATED BOND BALANCE = {:?}",
+        //     init_redelegated_bond_balance
+        // );
+        // for epoch in Epoch::iter_range(self.epoch, self.params.pipeline_len +
+        // 1) {
+        //     println!("Updating epoch {}", epoch);
+        //     let updated_total_unbonded = init_total_unbonded
+        //         + self.compute_total_unbonded(
+        //             validator,
+        //             infraction_epoch,
+        //             &total_unbonded.get(&epoch).cloned().unwrap_or_default(),
+        //             &total_redelegated_unbonded
+        //                 .get(&epoch)
+        //                 .cloned()
+        //                 .unwrap_or_default(),
+        //         );
+        //     let updated_bonds_balance = init_bond_balance
+        //         + total_bonded.get(&epoch).cloned().unwrap_or_default()
+        //         - Self::compute_recent_total_unbonded( infraction_epoch,
+        //           &total_unbonded.get(&epoch).cloned().unwrap_or_default(),
+        //           &total_redelegated_unbonded .get(&epoch) .cloned()
+        //           .unwrap_or_default(),
+        //         );
+
+        //     self.compute_redelegated_bonds_balance(
+        //         epoch,
+        //         &total_redelegated_bonded
+        //             .get(&epoch)
+        //             .cloned()
+        //             .unwrap_or_default(),
+        //         &total_redelegated_unbonded,
+        //         &mut init_redelegated_bond_balance,
+        //     );
+
+        //     dbg!(&updated_total_unbonded);
+        //     dbg!(&updated_bonds_balance);
+        //     dbg!(&init_redelegated_bond_balance);
+
+        //     let slashed_amount = (infraction_stake - updated_total_unbonded)
+        //         .mul_ceil(slash_rate);
+        //     let nom_stake = self
+        //         .validator_stakes
+        //         .get(&epoch)
+        //         .unwrap()
+        //         .get(validator)
+        //         .cloned()
+        //         .unwrap_or_default();
+        //     let current_stake = nom_stake
+        //         - slashed_amounts.get(&epoch).cloned().unwrap_or_default();
+
+        //     dbg!(&slashed_amount);
+        //     dbg!(&current_stake);
+
+        //     let slashable_stake = current_stake
+        //         - updated_bonds_balance
+        //         - init_redelegated_bond_balance .get(&epoch) .cloned()
+        //           .unwrap_or_default();
+
+        //     dbg!(&slashable_stake);
+
+        //     let cur_amount = slashed_amounts.entry(epoch).or_default();
+        //     *cur_amount += cmp::min(slashed_amount, slashable_stake);
+
+        //     init_total_unbonded = updated_total_unbonded;
+        //     init_bond_balance = updated_bonds_balance;
+
+        //     println!("After updating:");
+        //     dbg!(&init_total_unbonded);
+        //     dbg!(&init_bond_balance);
+        //     dbg!(&init_redelegated_bond_balance);
+        //     dbg!(&slashed_amounts);
+        // }
+
+        // slashed_amounts
     }
 
-    fn compute_redelegated_bonds_balance(
-        &self,
-        redel_bond_start: Epoch,
-        total_redelegated_bonded: &BTreeMap<
-            Address,
-            BTreeMap<Epoch, token::Amount>,
-        >,
-        total_redelegated_unbonded: &AbstractTotalRedelegatedUnbonded,
-        redelegated_balances: &mut BTreeMap<Epoch, token::Change>,
-    ) {
-        for (src_validator, bonds) in total_redelegated_bonded {
-            let slashes = self
-                .validator_slashes
-                .get(src_validator)
-                .cloned()
-                .unwrap_or_default();
-            for (&bond_start, &amount) in bonds {
-                let redelegation = crate::types::Redelegation {
-                    redel_bond_start,
-                    src_validator: src_validator.clone(),
-                    bond_start,
-                    amount,
-                };
-                self.compute_remainder_redelegation(
-                    &redelegation,
-                    &slashes,
-                    total_redelegated_unbonded,
-                    redelegated_balances,
-                );
-            }
-        }
-    }
+    // fn compute_redelegated_bonds_balance(
+    //     &self,
+    //     redel_bond_start: Epoch,
+    //     total_redelegated_bonded: &BTreeMap<
+    //         Address,
+    //         BTreeMap<Epoch, token::Amount>,
+    //     >,
+    //     total_redelegated_unbonded: &AbstractTotalRedelegatedUnbonded,
+    //     redelegated_balances: &mut BTreeMap<Epoch, token::Change>,
+    // ) {
+    //     println!("COMPUTE REDELEGATED BONDS BALANCE");
+    //     for (src_validator, bonds) in total_redelegated_bonded {
+    //         let slashes = self
+    //             .validator_slashes
+    //             .get(src_validator)
+    //             .cloned()
+    //             .unwrap_or_default();
+    //         for (&bond_start, &amount) in bonds {
+    //             let redelegation = crate::types::Redelegation {
+    //                 redel_bond_start,
+    //                 src_validator: src_validator.clone(),
+    //                 bond_start,
+    //                 amount,
+    //             };
+    //             dbg!(&redelegation);
 
-    fn compute_remainder_redelegation(
-        &self,
-        redelegation: &crate::types::Redelegation,
-        slashes: &[Slash],
-        total_redelegated_unbonded: &AbstractTotalRedelegatedUnbonded,
-        redelegated_balances: &mut BTreeMap<Epoch, token::Change>,
-    ) {
-        let mut total = token::Change::zero();
-        for epoch in Epoch::iter_bounds_inclusive(
-            redelegation.redel_bond_start,
-            self.pipeline(),
-        ) {
-            let updated_total_unbonded = if let Some(tot_redel_unbonded) =
-                total_redelegated_unbonded.get(&epoch)
-            {
-                if !Self::has_redelegation(
-                    tot_redel_unbonded,
-                    redelegation.bond_start,
-                    redelegation.redel_bond_start,
-                    &redelegation.src_validator,
-                ) {
-                    total
-                } else {
-                    total
-                        + tot_redel_unbonded
-                            .get(&redelegation.redel_bond_start)
-                            .unwrap()
-                            .get(&redelegation.src_validator)
-                            .unwrap()
-                            .get(&redelegation.bond_start)
-                            .cloned()
-                            .unwrap()
-                            .change()
-                }
-            } else {
-                total
-            };
+    //             self.compute_remainder_redelegation(
+    //                 &redelegation,
+    //                 &slashes,
+    //                 total_redelegated_unbonded,
+    //                 redelegated_balances,
+    //             );
+    //         }
+    //     }
+    // }
 
-            if epoch <= self.epoch {
-                total = updated_total_unbonded;
-            } else {
-                let list_slashes = slashes
+    // fn compute_remainder_redelegation(
+    //     &self,
+    //     redelegation: &crate::types::Redelegation,
+    //     slashes: &[Slash],
+    //     total_redelegated_unbonded: &AbstractTotalRedelegatedUnbonded,
+    //     redelegated_balances: &mut BTreeMap<Epoch, token::Change>,
+    // ) {
+    //     println!("\nCOMPUTE REMAINDER REDELEGATION");
+    //     dbg!(&slashes);
+    //     let mut total = token::Change::zero();
+    //     for epoch in Epoch::iter_bounds_inclusive(
+    //         redelegation.redel_bond_start,
+    //         self.pipeline(),
+    //     ) {
+    //         println!("ep {}", epoch);
+    //         let updated_total_unbonded = if let Some(tot_redel_unbonded) =
+    //             total_redelegated_unbonded.get(&epoch)
+    //         {
+    //             if !Self::has_redelegation(
+    //                 tot_redel_unbonded,
+    //                 redelegation.bond_start,
+    //                 redelegation.redel_bond_start,
+    //                 &redelegation.src_validator,
+    //             ) {
+    //                 total
+    //             } else {
+    //                 total
+    //                     + tot_redel_unbonded
+    //                         .get(&redelegation.redel_bond_start)
+    //                         .unwrap()
+    //                         .get(&redelegation.src_validator)
+    //                         .unwrap()
+    //                         .get(&redelegation.bond_start)
+    //                         .cloned()
+    //                         .unwrap()
+    //                         .change()
+    //             }
+    //         } else {
+    //             total
+    //         };
+    //         dbg!(&updated_total_unbonded);
+
+    //         if epoch <= self.epoch {
+    //             total = updated_total_unbonded;
+    //         } else {
+    //             let list_slashes = slashes
+    //                 .iter()
+    //                 .filter(|&slash| {
+    //                     self.params.in_redelegation_slashing_window(
+    //                         slash.epoch,
+    //                         self.params.redelegation_end_epoch_from_start(
+    //                             redelegation.redel_bond_start,
+    //                         ),
+    //                         redelegation.redel_bond_start,
+    //                     ) && redelegation.bond_start <= slash.epoch
+    //                 })
+    //                 .cloned()
+    //                 .collect::<Vec<_>>();
+    //             dbg!(&list_slashes);
+    //             let stake_left = Self::apply_slashes_to_amount(
+    //                 &self.params,
+    //                 &list_slashes,
+    //                 redelegation.amount.change() - updated_total_unbonded,
+    //             );
+    //             dbg!(&stake_left);
+
+    //             total = updated_total_unbonded;
+    //             let cur_bal = redelegated_balances.entry(epoch).or_default();
+    //             *cur_bal += stake_left;
+    //         }
+    //     }
+    // }
+
+    // fn compute_recent_total_unbonded(
+    //     infraction_epoch: Epoch,
+    //     total_unbonded: &BTreeMap<Epoch, token::Amount>,
+    //     total_redelegated_unbonded: &BTreeMap<
+    //         Epoch,
+    //         BTreeMap<Address, BTreeMap<Epoch, token::Amount>>,
+    //     >,
+    // ) -> token::Change {
+    //     println!("\nCOMPUTE RECENT TOTAL UNBONDED");
+    //     dbg!(&total_unbonded);
+    //     dbg!(&total_redelegated_unbonded);
+    //     println!("NOW ITERATING OVER TOTAL_UNBONDED");
+    //     total_unbonded.iter().fold(
+    //         token::Change::zero(),
+    //         |acc, (start_epoch, amount)| {
+    //             println!(
+    //                 "Epoch {}, Amt {}",
+    //                 start_epoch,
+    //                 amount.to_string_native()
+    //             );
+    //             if *start_epoch > infraction_epoch
+    //                 && *amount > token::Amount::zero()
+    //             {
+    //                 let non_redelegated_amount = if let Some(redel_unbonds) =
+    //                     total_redelegated_unbonded.get(start_epoch)
+    //                 {
+    //                     *amount
+    //                         - redel_unbonds.iter().fold(
+    //                           token::Amount::zero(), |sum, (_, unbonded_map)|
+    //                           { sum + unbonded_map .iter() .map(|(_epoch,
+    //                           amount)| *amount) .sum::<token::Amount>() },
+    //                         )
+    //                 } else {
+    //                     *amount
+    //                 };
+    //                 dbg!(&non_redelegated_amount.change());
+
+    //                 acc + non_redelegated_amount.change()
+    //             } else {
+    //                 dbg!(token::Change::zero());
+    //                 acc
+    //             }
+    //         },
+    //     )
+    // }
+
+    fn fold_and_slash_redelegated_bonds(
+        &self,
+        redel_bonds: &BTreeMap<Address, BTreeMap<Epoch, token::Amount>>,
+        start: Epoch,
+        list_slashes: &[Slash],
+        slash_epoch_filter: impl Fn(Epoch) -> bool,
+    ) -> FoldRedelegatedBondsResult {
+        let mut result = FoldRedelegatedBondsResult::default();
+        for (src_validator, bonds) in redel_bonds {
+            for (bond_start, bonded) in bonds {
+                let src_slashes = self
+                    .validator_slashes
+                    .get(src_validator)
+                    .cloned()
+                    .unwrap_or_default()
                     .iter()
-                    .filter(|&slash| {
+                    .filter(|&s| {
                         self.params.in_redelegation_slashing_window(
-                            slash.epoch,
-                            self.params.redelegation_end_epoch_from_start(
-                                redelegation.redel_bond_start,
-                            ),
-                            redelegation.redel_bond_start,
-                        ) && redelegation.bond_start <= slash.epoch
+                            s.epoch,
+                            self.params
+                                .redelegation_start_epoch_from_end(start),
+                            start,
+                        ) && *bond_start <= s.epoch
+                            && slash_epoch_filter(s.epoch)
                     })
                     .cloned()
                     .collect::<Vec<_>>();
 
-                let stake_left = Self::apply_slashes_to_amount(
-                    &self.params,
-                    &list_slashes,
-                    redelegation.amount.change() - updated_total_unbonded,
-                );
+                let mut merged = list_slashes
+                    .iter()
+                    .chain(src_slashes.iter())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                merged
+                    .sort_by(|s1, s2| s1.epoch.partial_cmp(&s2.epoch).unwrap());
 
-                total = updated_total_unbonded;
-                let cur_bal = redelegated_balances.entry(epoch).or_default();
-                *cur_bal += stake_left;
+                result.total_redelegated += *bonded;
+                result.total_after_slashing +=
+                    token::Amount::from(Self::apply_slashes_to_amount(
+                        &self.params,
+                        &merged,
+                        bonded.change(),
+                    ));
             }
         }
+        result
     }
 
-    fn compute_recent_total_unbonded(
-        infraction_epoch: Epoch,
-        total_unbonded: &BTreeMap<Epoch, token::Amount>,
-        total_redelegated_unbonded: &BTreeMap<
-            Epoch,
-            BTreeMap<Address, BTreeMap<Epoch, token::Amount>>,
-        >,
-    ) -> token::Change {
-        total_unbonded.iter().fold(
-            token::Change::zero(),
-            |acc, (start_epoch, amount)| {
-                if *start_epoch > infraction_epoch
-                    && *amount > token::Amount::zero()
-                {
-                    let non_redelegated_amount = if let Some(redel_unbonds) =
-                        total_redelegated_unbonded.get(start_epoch)
-                    {
-                        *amount
-                            - redel_unbonds.iter().fold(
-                                token::Amount::zero(),
-                                |sum, (_, unbonded_map)| {
-                                    sum + unbonded_map
-                                        .iter()
-                                        .map(|(_epoch, amount)| *amount)
-                                        .sum::<token::Amount>()
-                                },
-                            )
-                    } else {
-                        *amount
-                    };
-                    acc + non_redelegated_amount.change()
-                } else {
-                    acc
-                }
-            },
-        )
-    }
-
-    fn compute_total_unbonded(
+    fn compute_bond_at_epoch(
         &self,
+        epoch: Epoch,
+        start: Epoch,
+        amount: token::Amount,
+        redel_bonds: &BTreeMap<Address, BTreeMap<Epoch, token::Amount>>,
         validator: &Address,
-        infraction_epoch: Epoch,
-        total_unbonded: &BTreeMap<Epoch, token::Amount>,
-        total_redelegated_unbonded: &BTreeMap<
-            Epoch,
-            BTreeMap<Address, BTreeMap<Epoch, token::Amount>>,
-        >,
     ) -> token::Change {
-        let mut total = token::Change::zero();
-        for epoch in total_unbonded.keys() {
-            if *epoch > infraction_epoch {
-                continue;
-            }
-            let list_slashes = self
-                .validator_slashes
-                .get(validator)
-                .cloned()
-                .unwrap_or_default()
-                .iter()
-                .filter(|&slash| {
-                    // TODO: check bounds!
-                    *epoch <= slash.epoch
-                        && slash.epoch
-                            + self.params.slash_processing_epoch_offset()
-                            <= infraction_epoch
-                })
-                .cloned()
-                .collect::<Vec<_>>();
+        // `val list_slashes`
+        let list_slashes = self
+            .validator_slashes
+            .get(validator)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|&slash| {
+                // TODO: check bounds!
+                start <= slash.epoch
+                    && slash.epoch + self.params.slash_processing_epoch_offset()
+                        <= epoch
+            })
+            .cloned()
+            .collect::<Vec<_>>();
 
-            let redelegated_unbonded = total_redelegated_unbonded.get(epoch);
+        // `val filteredSlashMap` and `val resultFold`
+        // `fold_and_slash_redelegated_bonds`
+        let slash_epoch_filter =
+            |e: Epoch| e + self.params.slash_processing_epoch_offset() <= epoch;
+        let result_fold = self.fold_and_slash_redelegated_bonds(
+            redel_bonds,
+            start,
+            &list_slashes,
+            slash_epoch_filter,
+        );
 
-            // `fold_and_slash_redelegated_bonds`
-            let result_fold = if let Some(redelegated_unbonded) =
-                redelegated_unbonded
-            {
-                let (mut total_redelegated, mut total_after_slashing) =
-                    (token::Change::zero(), token::Change::zero());
+        // `val totalNoRedelegated`
+        let total_not_redelegated = amount - result_fold.total_redelegated;
+        // `val afterNoRedelegated`
+        let after_not_redelegated = Self::apply_slashes_to_amount(
+            &self.params,
+            &list_slashes,
+            total_not_redelegated.change(),
+        );
 
-                for (src_validator, unbonded_map) in redelegated_unbonded {
-                    for (bond_start, unbonded) in unbonded_map {
-                        let src_slashes = self
-                            .validator_slashes
-                            .get(src_validator)
-                            .cloned()
-                            .unwrap_or_default()
-                            .iter()
-                            .filter(|&s| {
-                                self.params.in_redelegation_slashing_window(
-                                    s.epoch,
-                                    self.params
-                                        .redelegation_start_epoch_from_end(
-                                            infraction_epoch,
-                                        ),
-                                    infraction_epoch,
-                                ) && *bond_start <= s.epoch
-                                    && s.epoch
-                                        + self
-                                            .params
-                                            .slash_processing_epoch_offset()
-                                        <= infraction_epoch
-                            })
-                            .cloned()
-                            .collect::<Vec<_>>();
+        after_not_redelegated + result_fold.total_after_slashing.change()
+    }
 
-                        let mut merged = list_slashes
-                            .iter()
-                            .chain(src_slashes.iter())
-                            .cloned()
-                            .collect::<Vec<_>>();
-                        merged.sort_by(|s1, s2| {
-                            s1.epoch.partial_cmp(&s2.epoch).unwrap()
-                        });
+    #[allow(clippy::too_many_arguments)]
+    fn compute_slash_bond_at_epoch(
+        &self,
+        epoch: Epoch,
+        infraction_epoch: Epoch,
+        bond_start: Epoch,
+        bond_amount: token::Amount,
+        redel_bonds: &BTreeMap<Address, BTreeMap<Epoch, token::Amount>>,
+        slash_rate: Dec,
+        validator: &Address,
+    ) -> token::Change {
+        let amount_due = self
+            .compute_bond_at_epoch(
+                infraction_epoch,
+                bond_start,
+                bond_amount,
+                redel_bonds,
+                validator,
+            )
+            .mul_ceil(slash_rate);
+        let slashable_amount = self
+            .compute_bond_at_epoch(
+                epoch,
+                bond_start,
+                bond_amount,
+                redel_bonds,
+                validator,
+            )
+            .mul_ceil(slash_rate);
 
-                        total_redelegated += unbonded.change();
-                        total_after_slashing += Self::apply_slashes_to_amount(
-                            &self.params,
-                            &merged,
-                            unbonded.change(),
-                        );
-                    }
-                }
-
-                FoldRedelegatedBondsResult {
-                    total_redelegated: token::Amount::from(total_redelegated),
-                    total_after_slashing: token::Amount::from(
-                        total_after_slashing,
-                    ),
-                }
-            } else {
-                FoldRedelegatedBondsResult::default()
-            };
-
-            let total_not_redelegated =
-                total_unbonded.get(epoch).cloned().unwrap_or_default()
-                    - result_fold.total_redelegated;
-            let after_not_redelegated = Self::apply_slashes_to_amount(
-                &self.params,
-                &list_slashes,
-                total_not_redelegated.change(),
-            );
-            let amount_after_slashing = after_not_redelegated
-                + result_fold.total_after_slashing.change();
-            total += amount_after_slashing;
-        }
-
-        total
+        cmp::min(amount_due, slashable_amount)
     }
 
     fn slash_validator_redelegation(

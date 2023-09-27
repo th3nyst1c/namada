@@ -51,13 +51,13 @@ use crate::{
     compute_amount_after_slashing_unbond,
     compute_amount_after_slashing_withdraw, compute_bond_at_epoch,
     compute_modified_redelegation, compute_new_redelegated_unbonds,
-    compute_slashable_amount, consensus_validator_set_handle,
-    copy_validator_sets_and_positions, delegator_redelegated_bonds_handle,
-    delegator_redelegated_unbonds_handle, find_bonds_to_remove,
-    find_validator_by_raw_hash, fold_and_slash_redelegated_bonds,
-    get_num_consensus_validators, init_genesis,
-    insert_validator_into_validator_set, is_validator, process_slashes,
-    purge_validator_sets_for_old_epoch,
+    compute_slash_bond_at_epoch, compute_slashable_amount,
+    consensus_validator_set_handle, copy_validator_sets_and_positions,
+    delegator_redelegated_bonds_handle, delegator_redelegated_unbonds_handle,
+    find_bonds_to_remove, find_validator_by_raw_hash,
+    fold_and_slash_redelegated_bonds, get_num_consensus_validators,
+    init_genesis, insert_validator_into_validator_set, is_validator,
+    process_slashes, purge_validator_sets_for_old_epoch,
     read_below_capacity_validator_set_addresses_with_stake,
     read_below_threshold_validator_set_addresses,
     read_consensus_validator_set_addresses_with_stake, read_total_stake,
@@ -2733,6 +2733,104 @@ fn test_compute_bond_at_epoch() {
     .unwrap();
 
     pretty_assertions::assert_eq!(res, 18.into());
+}
+
+/// `computeSlashBondAtEpochTest`
+#[test]
+fn test_compute_slash_bond_at_epoch() {
+    let mut storage = TestWlStorage::default();
+    let params = PosParams {
+        pipeline_len: 2,
+        unbonding_len: 4,
+        cubic_slashing_window_length: 1,
+        ..Default::default()
+    };
+    let alice = established_address_1();
+    let bob = established_address_2();
+
+    let current_epoch = Epoch(20);
+    let infraction_epoch =
+        current_epoch - params.slash_processing_epoch_offset();
+
+    let redelegated_bond = BTreeMap::from_iter([(
+        alice,
+        BTreeMap::from_iter([(infraction_epoch - 4, token::Change::from(10))]),
+    )]);
+
+    // Test 1
+    let res = compute_slash_bond_at_epoch(
+        &storage,
+        &params,
+        &bob,
+        current_epoch.next(),
+        infraction_epoch,
+        infraction_epoch - 2,
+        30.into(),
+        Some(&Default::default()),
+        Dec::one(),
+    )
+    .unwrap();
+
+    pretty_assertions::assert_eq!(res, 30.into());
+
+    // Test 2
+    let res = compute_slash_bond_at_epoch(
+        &storage,
+        &params,
+        &bob,
+        current_epoch.next(),
+        infraction_epoch,
+        infraction_epoch - 2,
+        30.into(),
+        Some(&redelegated_bond),
+        Dec::one(),
+    )
+    .unwrap();
+
+    pretty_assertions::assert_eq!(res, 30.into());
+
+    // Test 3
+    validator_slashes_handle(&bob)
+        .push(
+            &mut storage,
+            Slash {
+                epoch: infraction_epoch.prev(),
+                block_height: 0,
+                r#type: SlashType::DuplicateVote,
+                rate: Dec::one(),
+            },
+        )
+        .unwrap();
+    let res = compute_slash_bond_at_epoch(
+        &storage,
+        &params,
+        &bob,
+        current_epoch.next(),
+        infraction_epoch,
+        infraction_epoch - 2,
+        30.into(),
+        Some(&Default::default()),
+        Dec::one(),
+    )
+    .unwrap();
+
+    pretty_assertions::assert_eq!(res, 0.into());
+
+    // Test 4
+    let res = compute_slash_bond_at_epoch(
+        &storage,
+        &params,
+        &bob,
+        current_epoch.next(),
+        infraction_epoch,
+        infraction_epoch - 2,
+        30.into(),
+        Some(&redelegated_bond),
+        Dec::one(),
+    )
+    .unwrap();
+
+    pretty_assertions::assert_eq!(res, 0.into());
 }
 
 /// `computeNewRedelegatedUnbondsTest`

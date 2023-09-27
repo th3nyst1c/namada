@@ -1459,8 +1459,6 @@ where
         below_cap_in_mem.insert((stake, position), address);
     }
 
-    tracing::debug!("{consensus_in_mem:?}");
-
     for ((val_stake, val_position), val_address) in consensus_in_mem.into_iter()
     {
         consensus_validator_set
@@ -1468,11 +1466,6 @@ where
             .at(&val_stake)
             .insert(storage, val_position, val_address)?;
     }
-    tracing::debug!("New validator set should be inserted:");
-    tracing::debug!(
-        "{:?}",
-        read_consensus_validator_set_addresses(storage, target_epoch)?
-    );
 
     for ((val_stake, val_position), val_address) in below_cap_in_mem.into_iter()
     {
@@ -4866,11 +4859,9 @@ fn slash_validator<S>(
 where
     S: StorageRead,
 {
+    tracing::debug!("Slashing validator {} at rate {}", validator, slash_rate);
     let infraction_epoch =
         current_epoch - params.slash_processing_epoch_offset();
-
-    let infraction_stake =
-        read_validator_stake(storage, params, validator, infraction_epoch)?;
 
     let total_unbonded = total_unbonded_handle(validator);
     let total_redelegated_unbonded =

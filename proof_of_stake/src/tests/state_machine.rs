@@ -3317,11 +3317,12 @@ impl AbstractPosState {
         // NOTE: DO NOT UPDATE THE DELEGATOR REDELEGATED UNBONDS
         //
 
-        // Update the validator's total unbonded
+        // Update the validator's total bonded and unbonded
         for ((start_epoch, _), unbonded) in &new_unbonds {
             let cur_total_bonded =
                 src_total_bonded.entry(*start_epoch).or_default();
             *cur_total_bonded -= *unbonded;
+            debug_assert!(cur_total_bonded.non_negative());
 
             let cur_total_unbonded =
                 src_total_unbonded.entry(*start_epoch).or_default();
@@ -3790,30 +3791,6 @@ impl AbstractPosState {
             },
         );
 
-        // let mut slash_rates = BTreeMap::<Address, Dec>::new();
-        // for (validator, slashes) in slashes_this_epoch {
-        //     // let cur_slashes =
-        //     //
-        // self.validator_slashes.entry(validator.clone()).or_default();
-        //     let tot_rate = slash_rates.entry(validator.clone()).or_default();
-
-        //     for slash in slashes {
-        //         debug_assert_eq!(slash.epoch, infraction_epoch);
-        //         let rate = cmp::max(
-        //             slash.r#type.get_slash_rate(&self.params),
-        //             cubic_rate,
-        //         );
-        //         *tot_rate = cmp::min(Dec::one(), *tot_rate + rate);
-        //         // cur_slashes.push(Slash {
-        //         //     epoch: slash.epoch,
-        //         //     block_height: Default::default(),
-        //         //     r#type: SlashType::DuplicateVote,
-        //         //     rate,
-        //         // });
-        //     }
-        // }
-
-        // TODO: need to generalize this to abritrary pipeline len
         let mut map_validator_slash: BTreeMap<
             Address,
             BTreeMap<Epoch, token::Change>,
@@ -3948,15 +3925,14 @@ impl AbstractPosState {
         slash_rate: Dec,
         val_slash_amounts: &BTreeMap<Epoch, token::Change>,
     ) -> BTreeMap<Epoch, token::Change> {
+        tracing::debug!(
+            "Slashing validator {} at rate {}",
+            validator,
+            slash_rate
+        );
+
         let infraction_epoch =
             self.epoch - self.params.slash_processing_epoch_offset();
-        let infraction_stake = self
-            .validator_stakes
-            .get(&infraction_epoch)
-            .unwrap()
-            .get(validator)
-            .cloned()
-            .unwrap_or_default();
 
         let total_unbonded = self
             .total_unbonded

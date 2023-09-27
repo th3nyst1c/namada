@@ -4042,6 +4042,12 @@ impl AbstractPosState {
             let cur = slashed_amounts.entry(epoch).or_default();
             *cur += sum.change();
         }
+        // Hack - should this be done differently? (think this is safe)
+        let last_amt = slashed_amounts
+            .get(&self.pipeline().prev())
+            .cloned()
+            .unwrap();
+        slashed_amounts.insert(self.pipeline(), last_amt);
 
         slashed_amounts
 

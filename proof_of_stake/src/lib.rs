@@ -4967,6 +4967,13 @@ where
         let cur = slashed_amounts.entry(epoch).or_default();
         *cur += sum.change();
     }
+    // Hack - should this be done differently? (think this is safe)
+    let pipeline_epoch = current_epoch + params.pipeline_len;
+    let last_amt = slashed_amounts
+        .get(&pipeline_epoch.prev())
+        .cloned()
+        .unwrap();
+    slashed_amounts.insert(pipeline_epoch, last_amt);
 
     // OLD -----------------------------
     // for epoch in Epoch::iter_bounds_inclusive(

@@ -1,10 +1,11 @@
 //! General inflation system that will be used to process rewards for
 //! proof-of-stake, providing liquity to shielded asset pools, and public goods
 //! funding.
+use std::str::FromStr;
 
 use crate::ledger::storage_api::{self, StorageRead, StorageWrite};
 use crate::types::address::Address;
-use crate::types::dec::Dec;
+use crate::types::dec::{Dec, POS_DECIMAL_PRECISION};
 use crate::types::token;
 
 /// The domains of inflation
@@ -90,13 +91,13 @@ impl RewardsController {
 
         // Token amounts must be expressed in terms of the raw amount (namnam)
         // to properly run the PD controller
-        let locked = Dec::try_from(locked_tokens.raw_amount())
-            .expect("Should not fail to convert token Amount to Dec");
+
         let total = Dec::try_from(total_tokens.raw_amount())
             .expect("Should not fail to convert token Amount to Dec");
         let epochs_py: Dec = epochs_per_year.into();
 
-        let locked_ratio = locked / total;
+        let locked_ratio =
+            self.safe_large_token_ratio(locked_tokens, total_tokens);
         let max_inflation = total * max_reward_rate / epochs_py;
         let p_gain = p_gain_nom * max_inflation;
         let d_gain = d_gain_nom * max_inflation;
@@ -133,6 +134,37 @@ impl RewardsController {
         ValsToUpdate {
             locked_ratio,
             inflation,
+        }
+    }
+
+    fn safe_large_token_ratio(
+        &self,
+        token_num: token::Amount,
+        token_den: token::Amount,
+    ) -> Dec {
+        let num = Dec::try_from(token_num.raw_amount())
+            .expect("Should not fail to convert token Amount to Dec");
+        let den = Dec::try_from(token_den.raw_amount())
+            .expect("Should not fail to convert token Amount to Dec");
+
+        let mut num_str = num.to_string();
+        let mut den_str = den.to_string();
+
+        // Assumes that num < den always
+        if num_str.len() < (2 * POS_DECIMAL_PRECISION as usize) {
+            num / den
+        } else {
+            num_str
+                .insert(num_str.len() - (POS_DECIMAL_PRECISION as usize), '.');
+            den_str
+                .insert(den_str.len() - (POS_DECIMAL_PRECISION as usize), '.');
+
+            let num = Dec::from_str(&num_str)
+                .expect("Should not fail to convert back to Dec");
+            let den = Dec::from_str(&den_str)
+                .expect("Should not fail to convert back to Dec");
+
+            num / den
         }
     }
 }

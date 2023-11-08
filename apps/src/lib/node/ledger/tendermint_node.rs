@@ -263,18 +263,13 @@ pub async fn write_validator_key_async(
     home_dir: impl AsRef<Path>,
     consensus_key: &common::SecretKey,
 ) {
-    let home_dir = home_dir.as_ref();
-    let path = home_dir.join("config").join("priv_validator_key.json");
+    let path = validator_key(home_dir);
     // Make sure the dir exists
     let wallet_dir = path.parent().unwrap();
     fs::create_dir_all(wallet_dir)
         .await
         .expect("Couldn't create private validator key directory");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&path)
+    let mut file = ensure_empty_async(&path)
         .await
         .expect("Couldn't create private validator key file");
     let key = validator_key_to_json(consensus_key).unwrap();
@@ -290,17 +285,12 @@ pub fn write_validator_key(
     home_dir: impl AsRef<Path>,
     consensus_key: &common::SecretKey,
 ) {
-    let home_dir = home_dir.as_ref();
-    let path = home_dir.join("config").join("priv_validator_key.json");
+    let path = validator_key(home_dir);
     // Make sure the dir exists
     let wallet_dir = path.parent().unwrap();
     std::fs::create_dir_all(wallet_dir)
         .expect("Couldn't create private validator key directory");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&path)
+    let file = ensure_empty(&path)
         .expect("Couldn't create private validator key file");
     let key = validator_key_to_json(consensus_key).unwrap();
     serde_json::to_writer_pretty(file, &key)
@@ -309,17 +299,12 @@ pub fn write_validator_key(
 
 /// Initialize validator private state for Tendermint
 pub fn write_validator_state(home_dir: impl AsRef<Path>) {
-    let home_dir = home_dir.as_ref();
-    let path = home_dir.join("data").join("priv_validator_state.json");
+    let path = validator_state(home_dir);
     // Make sure the dir exists
     let wallet_dir = path.parent().unwrap();
     std::fs::create_dir_all(wallet_dir)
         .expect("Couldn't create private validator state directory");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&path)
+    let file = ensure_empty(&path)
         .expect("Couldn't create private validator state file");
     let state = json!({
        "height": "0",
@@ -356,8 +341,7 @@ async fn update_tendermint_config(
     home_dir: impl AsRef<Path>,
     config: TendermintConfig,
 ) -> Result<()> {
-    let home_dir = home_dir.as_ref();
-    let path = home_dir.join("config").join("config.toml");
+    let path = configuration(home_dir);
     let mut config = config.clone();
 
     config.moniker =
@@ -394,8 +378,7 @@ async fn write_tm_genesis(
     genesis_time: DateTimeUtc,
     #[cfg(feature = "abcipp")] config: &config::Tendermint,
 ) {
-    let home_dir = home_dir.as_ref();
-    let path = home_dir.join("config").join("genesis.json");
+    let path = genesis(home_dir);
     let mut file = File::open(&path).await.unwrap_or_else(|err| {
         panic!(
             "Couldn't open the genesis file at {:?}, error: {}",
@@ -448,4 +431,41 @@ async fn write_tm_genesis(
     file.write_all(&data[..])
         .await
         .expect("Couldn't write the CometBFT genesis file");
+}
+
+async fn ensure_empty_async(path: &PathBuf) -> std::io::Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .await
+}
+
+fn ensure_empty(path: &PathBuf) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+}
+fn validator_key(home_dir: impl AsRef<Path>) -> PathBuf {
+    home_dir
+        .as_ref()
+        .join("config")
+        .join("priv_validator_key.json")
+}
+
+fn validator_state(home_dir: impl AsRef<Path>) -> PathBuf {
+    home_dir
+        .as_ref()
+        .join("data")
+        .join("priv_validator_state.json")
+}
+
+fn configuration(home_dir: impl AsRef<Path>) -> PathBuf {
+    home_dir.as_ref().join("config").join("config.toml")
+}
+fn genesis(home_dir: impl AsRef<Path>) -> PathBuf {
+    home_dir.as_ref().join("config").join("genesis.json")
 }

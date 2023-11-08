@@ -15,7 +15,9 @@ use tendermint_abcipp::Moniker;
 use thiserror::Error;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
+use tokio::sync::oneshot::error::RecvError;
+use tokio::sync::oneshot::{Receiver, Sender};
 
 use crate::cli::namada_version;
 use crate::config;
@@ -84,10 +86,26 @@ pub async fn run(
     genesis_time: DateTimeUtc,
     proxy_app_address: String,
     config: config::Ledger,
-    abort_recv: tokio::sync::oneshot::Receiver<
-        tokio::sync::oneshot::Sender<()>,
-    >,
+    abort_recv: Receiver<Sender<()>>,
 ) -> Result<()> {
+    let (home_dir_string, tendermint_path) =
+        initalize_config(home_dir, chain_id, genesis_time, config).await?;
+    let tendermint_node =
+        start_node(proxy_app_address, home_dir_string, tendermint_path)?;
+
+    tracing::info!("CometBFT node started");
+
+    handle_node_response(tendermint_node, abort_recv).await
+}
+
+/// Setup the tendermint configuration. We return the tendermint path and home
+/// directory
+async fn initalize_config(
+    home_dir: PathBuf,
+    chain_id: ChainId,
+    genesis_time: DateTimeUtc,
+    config: config::Ledger,
+) -> Result<(String, String)> {
     let home_dir_string = home_dir.to_string_lossy().to_string();
     let tendermint_path = from_env_or_default()?;
     let mode = config.shell.tendermint_mode.to_str().to_owned();
@@ -110,8 +128,16 @@ pub async fn run(
         .unwrap();
 
     update_tendermint_config(&home_dir, config.cometbft).await?;
+    Ok((home_dir_string, tendermint_path))
+}
 
-    let mut tendermint_node = Command::new(&tendermint_path);
+/// Startup the node
+fn start_node(
+    proxy_app_address: String,
+    home_dir_string: String,
+    tendermint_path: String,
+) -> Result<Child> {
+    let mut tendermint_node = Command::new(tendermint_path);
     tendermint_node.args([
         "start",
         "--proxy_app",
@@ -128,12 +154,17 @@ pub async fn run(
         tendermint_node.stdout(Stdio::null());
     }
 
-    let mut tendermint_node = tendermint_node
+    tendermint_node
         .kill_on_drop(true)
         .spawn()
-        .map_err(Error::StartUp)?;
-    tracing::info!("CometBFT node started");
+        .map_err(Error::StartUp)
+}
 
+/// Handle the node response
+async fn handle_node_response(
+    mut tendermint_node: Child,
+    abort_recv: Receiver<Sender<()>>,
+) -> Result<()> {
     tokio::select! {
         status = tendermint_node.wait() => {
             match status {
@@ -150,19 +181,27 @@ pub async fn run(
             }
         },
         resp_sender = abort_recv => {
-            match resp_sender {
-                Ok(resp_sender) => {
-                    tracing::info!("Shutting down Tendermint node...");
-                    tendermint_node.kill().await.unwrap();
-                    resp_sender.send(()).unwrap();
-                },
-                Err(err) => {
-                    tracing::error!("The Tendermint abort sender has unexpectedly dropped: {}", err);
-                    tracing::info!("Shutting down Tendermint node...");
-                    tendermint_node.kill().await.unwrap();
-                }
-            }
+            handle_abort(resp_sender, &mut tendermint_node).await;
             Ok(())
+        }
+    }
+}
+// Handle tendermint aborting
+async fn handle_abort(
+    resp_sender: std::result::Result<Sender<()>, RecvError>,
+    node: &mut Child,
+) {
+    match resp_sender {
+        Ok(resp_sender) => {
+            tracing_kill(node).await;
+            resp_sender.send(()).unwrap();
+        }
+        Err(err) => {
+            tracing::error!(
+                "The Tendermint abort sender has unexpectedly dropped: {}",
+                err
+            );
+            tracing_kill(node).await;
         }
     }
 }
@@ -417,6 +456,11 @@ async fn write_tm_genesis(
     file.write_all(&data[..])
         .await
         .map_err(|_| Error::CantWrite(GENESIS_FILE))
+}
+
+async fn tracing_kill(node: &mut Child) {
+    tracing::info!("Shutting down Tendermint node...");
+    node.kill().await.unwrap();
 }
 
 fn ensure_empty(path: &PathBuf) -> std::io::Result<std::fs::File> {

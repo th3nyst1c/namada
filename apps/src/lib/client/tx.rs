@@ -455,8 +455,9 @@ pub async fn submit_init_validator<'a>(
             tendermint_node::write_validator_key(
                 &tendermint_home,
                 &consensus_key,
-            );
-            tendermint_node::write_validator_state(tendermint_home);
+            )
+            .unwrap();
+            tendermint_node::write_validator_state(tendermint_home).unwrap();
 
             // Write Namada config stuff or figure out how to do the above
             // tendermint_node things two epochs in the future!!!

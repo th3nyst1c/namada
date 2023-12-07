@@ -20,29 +20,19 @@ use namada_core::types::transaction::GasLimit;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-// Bond WASM path
+use super::GlobalArgs;
+
 const TX_BOND_WASM: &str = "tx_bond.wasm";
-// Unbond WASM path
 const TX_UNBOND_WASM: &str = "tx_unbond.wasm";
-// Initialize validator transaction WASM path
 const TX_INIT_VALIDATOR_WASM: &str = "tx_init_validator.wasm";
-// Unjail validator transaction WASM path
 const TX_UNJAIL_VALIDATOR_WASM: &str = "tx_unjail_validator.wasm";
-// Deactivate validator transaction WASM path
 const TX_DEACTIVATE_VALIDATOR_WASM: &str = "tx_deactivate_validator.wasm";
-// Reactivate validator transaction WASM path
 const TX_REACTIVATE_VALIDATOR_WASM: &str = "tx_reactivate_validator.wasm";
-// Claim-rewards WASM path
 const TX_CLAIM_REWARDS_WASM: &str = "tx_claim_rewards.wasm";
-// Redelegate transaction WASM path
 const TX_REDELEGATE_WASM: &str = "tx_redelegate.wasm";
-// Change validator metadata WASM path
 const TX_CHANGE_METADATA_WASM: &str = "tx_change_validator_metadata.wasm";
-// Change consensus key WASM path
 const TX_CHANGE_CONSENSUS_KEY_WASM: &str = "tx_change_consensus_key.wasm";
-// Change commission WASM path
 const TX_CHANGE_COMMISSION_WASM: &str = "tx_change_validator_commission.wasm";
-// Withdraw WASM path
 const TX_WITHDRAW_WASM: &str = "tx_withdraw.wasm";
 
 /// A bond transaction
@@ -54,10 +44,7 @@ impl Bond {
         validator: Address,
         amount: token::Amount,
         source: Option<Address>,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
+        args: GlobalArgs,
     ) -> Self {
         let unbond = namada_core::types::transaction::pos::Bond {
             validator,
@@ -66,31 +53,18 @@ impl Bond {
         };
 
         Self(tx_builders::build_tx(
+            args,
             unbond,
-            timestamp,
-            expiration,
-            code_hash,
             TX_BOND_WASM.to_string(),
-            chain_id,
         ))
     }
 
     //FIXME: share
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     //FIXME: share
@@ -112,10 +86,7 @@ impl Unbond {
         validator: Address,
         amount: token::Amount,
         source: Option<Address>,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
+        args: GlobalArgs,
     ) -> Self {
         let unbond = namada_core::types::transaction::pos::Unbond {
             validator,
@@ -124,30 +95,17 @@ impl Unbond {
         };
 
         Self(tx_builders::build_tx(
+            args,
             unbond,
-            timestamp,
-            expiration,
-            code_hash,
             TX_UNBOND_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx
@@ -177,10 +135,7 @@ impl InitValidator {
         website: Option<String>,
         discord_handle: Option<String>,
         validator_vp_code_hash: Hash,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
+        args: GlobalArgs,
     ) -> Self {
         let update_account =
             namada_core::types::transaction::pos::InitValidator {
@@ -200,30 +155,17 @@ impl InitValidator {
             };
 
         Self(tx_builders::build_tx(
+            args,
             update_account,
-            timestamp,
-            expiration,
-            code_hash,
             TX_INIT_VALIDATOR_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx
@@ -239,38 +181,19 @@ pub struct UnjailValidator(Tx);
 
 impl UnjailValidator {
     /// Build a raw Unjail validator transaction from the given parameters
-    pub fn new(
-        address: Address,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
-    ) -> Self {
+    pub fn new(address: Address, args: GlobalArgs) -> Self {
         Self(tx_builders::build_tx(
+            args,
             address,
-            timestamp,
-            expiration,
-            code_hash,
             TX_UNJAIL_VALIDATOR_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx
@@ -286,38 +209,19 @@ pub struct DeactivateValidator(Tx);
 
 impl DeactivateValidator {
     /// Build a raw DeactivateValidator transaction from the given parameters
-    pub fn new(
-        address: Address,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
-    ) -> Self {
+    pub fn new(address: Address, args: GlobalArgs) -> Self {
         Self(tx_builders::build_tx(
+            args,
             address,
-            timestamp,
-            expiration,
-            code_hash,
             TX_DEACTIVATE_VALIDATOR_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx
@@ -333,38 +237,19 @@ pub struct ReactivateValidator(Tx);
 
 impl ReactivateValidator {
     /// Build a raw ReactivateValidator transaction from the given parameters
-    pub fn new(
-        address: Address,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
-    ) -> Self {
+    pub fn new(address: Address, args: GlobalArgs) -> Self {
         Self(tx_builders::build_tx(
+            args,
             address,
-            timestamp,
-            expiration,
-            code_hash,
             TX_REACTIVATE_VALIDATOR_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx
@@ -383,10 +268,7 @@ impl ClaimRewards {
     pub fn new(
         validator: Address,
         source: Option<Address>,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
+        args: GlobalArgs,
     ) -> Self {
         let init_proposal = namada_core::types::transaction::pos::Withdraw {
             validator,
@@ -394,30 +276,17 @@ impl ClaimRewards {
         };
 
         Self(tx_builders::build_tx(
+            args,
             init_proposal,
-            timestamp,
-            expiration,
-            code_hash,
             TX_CLAIM_REWARDS_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx
@@ -440,10 +309,7 @@ impl ChangeMetaData {
         website: Option<String>,
         discord_handle: Option<String>,
         commission_rate: Option<Dec>,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
+        args: GlobalArgs,
     ) -> Self {
         let init_proposal =
             namada_core::types::transaction::pos::MetaDataChange {
@@ -456,30 +322,17 @@ impl ChangeMetaData {
             };
 
         Self(tx_builders::build_tx(
+            args,
             init_proposal,
-            timestamp,
-            expiration,
-            code_hash,
             TX_CHANGE_METADATA_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx
@@ -498,10 +351,7 @@ impl ChangeConsensusKey {
     pub fn new(
         validator: Address,
         consensus_key: common::PublicKey,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
+        args: GlobalArgs,
     ) -> Self {
         let init_proposal =
             namada_core::types::transaction::pos::ConsensusKeyChange {
@@ -510,30 +360,17 @@ impl ChangeConsensusKey {
             };
 
         Self(tx_builders::build_tx(
+            args,
             init_proposal,
-            timestamp,
-            expiration,
-            code_hash,
             TX_CHANGE_CONSENSUS_KEY_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx
@@ -549,14 +386,7 @@ pub struct ChangeCommission(Tx);
 
 impl ChangeCommission {
     /// Build a raw ChangeCommission transaction from the given parameters
-    pub fn new(
-        validator: Address,
-        new_rate: Dec,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
-    ) -> Self {
+    pub fn new(validator: Address, new_rate: Dec, args: GlobalArgs) -> Self {
         let init_proposal =
             namada_core::types::transaction::pos::CommissionChange {
                 validator,
@@ -564,30 +394,17 @@ impl ChangeCommission {
             };
 
         Self(tx_builders::build_tx(
+            args,
             init_proposal,
-            timestamp,
-            expiration,
-            code_hash,
             TX_CHANGE_COMMISSION_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx
@@ -606,10 +423,7 @@ impl Withdraw {
     pub fn new(
         validator: Address,
         source: Option<Address>,
-        timestamp: DateTimeUtc,
-        expiration: Option<DateTimeUtc>,
-        code_hash: Hash,
-        chain_id: ChainId,
+        args: GlobalArgs,
     ) -> Self {
         let init_proposal = namada_core::types::transaction::pos::Withdraw {
             validator,
@@ -617,30 +431,17 @@ impl Withdraw {
         };
 
         Self(tx_builders::build_tx(
+            args,
             init_proposal,
-            timestamp,
-            expiration,
-            code_hash,
             TX_WITHDRAW_WASM.to_string(),
-            chain_id,
         ))
     }
 
-    /// Generate the signature(s) for the given transaction and signers
-    pub fn generate_signatures(
-        mut self,
-        secret_keys: &[common::SecretKey],
-        public_keys_index_map: &AccountPublicKeysMap,
-        signer: Option<Address>,
-    ) -> (Self, Vec<SignatureIndex>) {
-        let (tx, sigs) = tx_builders::generate_tx_signatures(
-            self.0,
-            secret_keys,
-            public_keys_index_map,
-            signer,
-        );
+    /// Get the bytes to sign for the given transaction
+    pub fn get_msg_to_sign(mut self) -> (Self, Vec<u8>) {
+        let (tx, msg) = tx_builders::get_msg_to_sign(self.0);
 
-        (Self(tx), sigs)
+        (Self(tx), msg)
     }
 
     /// Attach the provided signatures to the tx

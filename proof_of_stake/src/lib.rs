@@ -57,9 +57,9 @@ use crate::storage::{
     read_consensus_validator_set_addresses, read_non_pos_owned_params,
     read_pos_params, read_validator_last_slash_epoch,
     read_validator_max_commission_rate_change, read_validator_stake,
-    total_bonded_handle, total_consensus_stake_key_handle,
-    total_unbonded_handle, try_insert_consensus_key, unbond_handle,
-    update_total_deltas, update_validator_deltas, validator_addresses_handle,
+    total_bonded_handle, total_consensus_stake_handle, total_unbonded_handle,
+    try_insert_consensus_key, unbond_handle, update_total_deltas,
+    update_validator_deltas, validator_addresses_handle,
     validator_commission_rate_handle, validator_consensus_key_handle,
     validator_deltas_handle, validator_eth_cold_key_handle,
     validator_eth_hot_key_handle, validator_incoming_redelegations_handle,
@@ -342,7 +342,7 @@ where
         epoch,
         total.to_string_native()
     );
-    total_consensus_stake_key_handle().set(storage, total, epoch, 0)
+    total_consensus_stake_handle().set(storage, total, epoch, 0)
 }
 
 /// Used below in `fn unbond_tokens` to update the bond and unbond amounts
@@ -1921,7 +1921,7 @@ pub fn get_total_consensus_stake<S>(
 where
     S: StorageRead,
 {
-    total_consensus_stake_key_handle()
+    total_consensus_stake_handle()
         .get(storage, epoch, params)
         .map(|o| o.expect("Total consensus stake could not be retrieved."))
 }

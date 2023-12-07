@@ -416,7 +416,7 @@ where
 ///
 /// Adds any newly processed slash amount to `dest_slashed_amounts`.
 #[allow(clippy::too_many_arguments)]
-fn slash_validator_redelegation<S>(
+pub fn slash_validator_redelegation<S>(
     storage: &S,
     params: &OwnedPosParams,
     src_validator: &Address,
@@ -468,7 +468,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn slash_redelegation<S>(
+pub fn slash_redelegation<S>(
     storage: &S,
     params: &OwnedPosParams,
     amount: token::Amount,
@@ -591,7 +591,7 @@ where
 /// Returns a map that adds any newly processed slash amount to
 /// `slashed_amounts_map`.
 // `def slashValidator`
-fn slash_validator<S>(
+pub fn slash_validator<S>(
     storage: &S,
     params: &OwnedPosParams,
     validator: &Address,
@@ -716,7 +716,7 @@ where
 /// - `epoch` - the latest slash epoch to consider.
 /// - `start` - the start epoch of the bond
 /// - `redelegated_bonds`
-fn compute_bond_at_epoch<S>(
+pub fn compute_bond_at_epoch<S>(
     storage: &S,
     params: &OwnedPosParams,
     validator: &Address,
@@ -763,7 +763,7 @@ where
 /// Uses `fn compute_bond_at_epoch` to compute the token amount to slash in
 /// order to prevent overslashing.
 #[allow(clippy::too_many_arguments)]
-fn compute_slash_bond_at_epoch<S>(
+pub fn compute_slash_bond_at_epoch<S>(
     storage: &S,
     params: &OwnedPosParams,
     validator: &Address,
@@ -850,7 +850,7 @@ pub fn apply_list_slashes(
 /// Computes how much is left from a bond or unbond after applying a slash given
 /// that a set of slashes may have been previously applied.
 // `def computeSlashableAmount`
-fn compute_slashable_amount(
+pub fn compute_slashable_amount(
     params: &OwnedPosParams,
     slash: &Slash,
     amount: token::Amount,

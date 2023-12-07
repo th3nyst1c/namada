@@ -81,7 +81,7 @@ pub fn validator_eth_cold_key_handle(
 }
 
 /// Get the storage handle to the total consensus validator stake
-pub fn total_consensus_stake_key_handle() -> TotalConsensusStakes {
+pub fn total_consensus_stake_handle() -> TotalConsensusStakes {
     let key = storage_key::total_consensus_stake_key();
     TotalConsensusStakes::open(key)
 }
@@ -791,6 +791,8 @@ where
     storage.read(&key)
 }
 
+/// Write the last epoch in which rewards were claimed for the
+/// delegator-validator pair
 pub fn write_last_reward_claim_epoch<S>(
     storage: &mut S,
     delegator: &Address,

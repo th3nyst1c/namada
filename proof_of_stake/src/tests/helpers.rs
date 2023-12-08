@@ -77,7 +77,7 @@ pub fn advance_epoch(s: &mut TestWlStorage, params: &PosParams) -> Epoch {
     current_epoch
 }
 
-fn arb_genesis_validators(
+pub fn arb_genesis_validators(
     size: Range<usize>,
     threshold: Option<token::Amount>,
 ) -> impl Strategy<Value = Vec<GenesisValidator>> {

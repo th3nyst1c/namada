@@ -71,10 +71,10 @@ fn test_become_validator_aux(
     new_validator_consensus_key: common::SecretKey,
     validators: Vec<GenesisValidator>,
 ) {
-    println!(
-        "Test inputs: {params:?}, new validator: {new_validator}, genesis \
-         validators: {validators:#?}"
-    );
+    // println!(
+    //     "Test inputs: {params:?}, new validator: {new_validator}, genesis \
+    //      validators: {validators:#?}"
+    // );
 
     let mut s = TestWlStorage::default();
 
@@ -325,13 +325,13 @@ fn test_validator_sets() {
         (gen_validator(), token::Amount::native_whole(1));
     let ((val7, pk7), stake7) =
         (gen_validator(), token::Amount::native_whole(1));
-    println!("\nval1: {val1}, {pk1}, {}", stake1.to_string_native());
-    println!("val2: {val2}, {pk2}, {}", stake2.to_string_native());
-    println!("val3: {val3}, {pk3}, {}", stake3.to_string_native());
-    println!("val4: {val4}, {pk4}, {}", stake4.to_string_native());
-    println!("val5: {val5}, {pk5}, {}", stake5.to_string_native());
-    println!("val6: {val6}, {pk6}, {}", stake6.to_string_native());
-    println!("val7: {val7}, {pk7}, {}", stake7.to_string_native());
+    // println!("\nval1: {val1}, {pk1}, {}", stake1.to_string_native());
+    // println!("val2: {val2}, {pk2}, {}", stake2.to_string_native());
+    // println!("val3: {val3}, {pk3}, {}", stake3.to_string_native());
+    // println!("val4: {val4}, {pk4}, {}", stake4.to_string_native());
+    // println!("val5: {val5}, {pk5}, {}", stake5.to_string_native());
+    // println!("val6: {val6}, {pk6}, {}", stake6.to_string_native());
+    // println!("val7: {val7}, {pk7}, {}", stake7.to_string_native());
 
     let start_epoch = Epoch::default();
     let epoch = start_epoch;
@@ -620,7 +620,7 @@ fn test_validator_sets() {
     // will enter the below-threshold validator set.
     let unbond = token::Amount::from_uint(500_000, 0).unwrap();
     let stake1 = stake1 - unbond;
-    println!("val1 {val1} new stake {}", stake1.to_string_native());
+
     // Because `update_validator_set` and `update_validator_deltas` are
     // effective from pipeline offset, we use pipeline epoch for the rest of the
     // checks
@@ -819,7 +819,7 @@ fn test_validator_sets() {
     // consensus validator val2 into the consensus set
     let bond = token::Amount::from_uint(500_000, 0).unwrap();
     let stake6 = stake6 + bond;
-    println!("val6 {val6} new stake {}", stake6.to_string_native());
+
     update_validator_set(&mut s, &params, &val6, bond.change(), epoch, None)
         .unwrap();
     update_validator_deltas(&mut s, &params, &val6, bond.change(), epoch, None)
@@ -867,7 +867,7 @@ fn test_validator_sets() {
         .collect();
 
     assert_eq!(below_capacity_vals.len(), 3);
-    dbg!(&below_capacity_vals);
+
     assert!(matches!(
         &below_capacity_vals[0],
         (lazy_map::NestedSubKey::Data {
@@ -919,7 +919,7 @@ fn test_validator_sets() {
     // Check tendermint validator set updates
     assert_eq!(val6_bond_epoch, epoch, "val5's bond is applied now");
     let tm_updates = get_tendermint_set_updates(&s, &params, epoch);
-    dbg!(&tm_updates);
+    // dbg!(&tm_updates);
     assert_eq!(tm_updates.len(), 2);
     assert_eq!(
         tm_updates[0],
@@ -998,9 +998,9 @@ fn test_validator_sets_swap() {
     // 0 voting power
     let ((val3, pk3), stake3) =
         (gen_validator(), token::Amount::from_uint(5, 0).unwrap());
-    println!("val1: {val1}, {pk1}, {}", stake1.to_string_native());
-    println!("val2: {val2}, {pk2}, {}", stake2.to_string_native());
-    println!("val3: {val3}, {pk3}, {}", stake3.to_string_native());
+    // println!("val1: {val1}, {pk1}, {}", stake1.to_string_native());
+    // println!("val2: {val2}, {pk2}, {}", stake2.to_string_native());
+    // println!("val3: {val3}, {pk3}, {}", stake3.to_string_native());
 
     let protocol_sk_1 = common_sk_from_simple_seed(0);
     let protocol_sk_2 = common_sk_from_simple_seed(1);
@@ -1177,7 +1177,7 @@ fn test_validator_sets_swap() {
     // Check tendermint validator set updates
     assert_eq!(bonds_epoch_2, epoch);
     let tm_updates = get_tendermint_set_updates(&s, &params, epoch);
-    dbg!(&tm_updates);
+    // dbg!(&tm_updates);
     assert_eq!(tm_updates.len(), 1);
     // `val2` must not be given to tendermint as it was and still is below
     // capacity

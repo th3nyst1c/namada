@@ -1,5 +1,7 @@
 use crate::transaction;
 use borsh_ext::BorshSerializeExt;
+use ibc::core::Msg;
+pub use namada_core::ibc::applications::transfer::msgs::transfer::MsgTransfer;
 use namada_core::ledger::governance::storage::proposal::ProposalType;
 use namada_core::proto::Section;
 use namada_core::proto::SignatureIndex;
@@ -22,36 +24,30 @@ use std::str::FromStr;
 
 use super::GlobalArgs;
 
-const TX_TRANSFER_WASM: &str = "tx_transfer.wasm";
+const TX_IBC_WASM: &str = "tx_ibc.wasm";
 
-pub struct Transfer(Tx);
+pub struct IbcTransfer(Tx);
 
-impl Transfer {
-    /// Build a raw Transfer transaction from the given parameters
+impl IbcTransfer {
+    /// Build a raw IbcTransfer transaction from the given parameters
     pub fn new(
-        source: Address,
-        target: Address,
-        token: Address,
-        amount: DenominatedAmount,
-        key: Option<String>,
-        //FIXME: handle masp here
-        shielded: Option<Hash>,
-        args: GlobalArgs,
+        packet_data: MsgTransfer,
+        GlobalArgs {
+            timestamp,
+            expiration,
+            code_hash,
+            chain_id,
+        }: GlobalArgs,
     ) -> Self {
-        let init_proposal = namada_core::types::token::Transfer {
-            source,
-            target,
-            token,
-            amount,
-            key,
-            shielded,
-        };
+        let mut tx = Tx::new(chain_id, expiration);
+        tx.header.timestamp = timestamp;
+        tx.add_code_from_hash(code_hash, Some(TX_IBC_WASM.to_string()));
 
-        Self(transaction::build_tx(
-            args,
-            init_proposal.serialize_to_vec(),
-            TX_TRANSFER_WASM.to_string(),
-        ))
+        let mut data = vec![];
+        prost::Message::encode(&packet_data.to_any(), &mut data).unwrap();
+        tx.set_data(namada_core::proto::Data::new(data));
+
+        Self(tx)
     }
 
     /// Get the bytes to sign for the given transaction

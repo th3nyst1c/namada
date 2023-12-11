@@ -20,37 +20,32 @@ use namada_core::types::transaction::GasLimit;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
+pub use namada_core::types::eth_bridge_pool::{GasFee, TransferToEthereum};
+
 use super::GlobalArgs;
 
-const TX_TRANSFER_WASM: &str = "tx_transfer.wasm";
+const TX_BRIDGE_POOL_WASM: &str = "tx_bridge_pool.wasm";
 
-pub struct Transfer(Tx);
+/// A transfer over the Ethereum bridge
+pub struct BridgeTransfer(Tx);
 
-impl Transfer {
-    /// Build a raw Transfer transaction from the given parameters
+impl BridgeTransfer {
+    /// Build a raw BridgeTransfer transaction from the given parameters
     pub fn new(
-        source: Address,
-        target: Address,
-        token: Address,
-        amount: DenominatedAmount,
-        key: Option<String>,
-        //FIXME: handle masp here
-        shielded: Option<Hash>,
+        transfer: TransferToEthereum,
+        gas_fee: GasFee,
         args: GlobalArgs,
     ) -> Self {
-        let init_proposal = namada_core::types::token::Transfer {
-            source,
-            target,
-            token,
-            amount,
-            key,
-            shielded,
-        };
+        let pending_transfer =
+            namada_core::types::eth_bridge_pool::PendingTransfer {
+                transfer,
+                gas_fee,
+            };
 
         Self(transaction::build_tx(
             args,
-            init_proposal.serialize_to_vec(),
-            TX_TRANSFER_WASM.to_string(),
+            pending_transfer,
+            TX_BRIDGE_POOL_WASM.to_string(),
         ))
     }
 

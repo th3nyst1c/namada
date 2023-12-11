@@ -1,3 +1,20 @@
+// 22 tx types
+pub mod transaction;
+
+/*
+    * tx status
+    * block height
+    * account balance
+    * anything else if needed
+ */
+// pub mod reading;
+
+// either sync or async tx submission - prints tx hashes that can be used for tracking
+// pub mod writing;
+// pub mod wallet;
+
+// ====
+
 /*
    SDK for building transactions without having to pass in an entire Namada chain
 
@@ -103,6 +120,8 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 
 pub mod tx_builders;
+mod writing;
+mod reading;
 
 //FIXME: check that we covered all the transactions
 
